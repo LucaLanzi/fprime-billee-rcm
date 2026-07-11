@@ -33,3 +33,5 @@ add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/FprimeBilleeRcm")
 
 # Register the RP2350 application and attach its sources to Zephyr's app target.
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
+
+# Register components included in the Zephyr Deployment
