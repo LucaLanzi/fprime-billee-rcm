@@ -1,5 +1,60 @@
 # F Prime 4.2.2 and fprime-zephyr Compatibility Guide
 
+## Summary
+
+F Prime 4.2.2 and the current `fprime-zephyr` integration are close to
+compatible, but they come from different points in the development of F Prime.
+The project therefore needed a small compatibility layer and several changes
+from Linux-oriented defaults to Zephyr-oriented behavior.
+
+The required changes were:
+
+1. **Load Zephyr before F Prime.** The top-level CMake file now initializes
+   Zephyr before declaring the project. This gives Zephyr an opportunity to
+   select the RP2350 board, SDK, compiler, device tree, and application target
+   before F Prime configures the deployment.
+
+2. **Make the RP2350 deployment part of the main build.** The deployment was
+   added to the top-level CMake tree. Without this, Zephyr created its
+   application target but never received `Main.cpp` or the F Prime topology.
+
+3. **Use a project-local deployment helper for F Prime 4.2.2.** Newer
+   `fprime-zephyr` expects an installation helper and a counting-semaphore
+   target that do not exist in F Prime 4.2.2. The project now supplies the
+   minimal compatibility behavior from its own `cmake` directory. Neither the
+   F Prime nor `fprime-zephyr` submodule is modified.
+
+4. **Replace Linux components with Zephyr components.** The generated
+   deployment originally used a Linux timer, Linux UART driver, desktop clock,
+   command-line arguments, and operating-system signals. These were replaced
+   with the Zephyr rate driver, Zephyr UART driver, Zephyr time provider, and an
+   embedded `main()` function that runs continuously.
+
+5. **Connect and configure the Zephyr UART.** The UART now uses the console
+   device selected by Zephyr's device tree at 115200 baud. Its receive polling
+   port is connected to a rate group because the Zephyr driver does not use the
+   Linux UART driver's background receive thread.
+
+6. **Adjust F Prime's task storage for Zephyr 4.3.** Zephyr's task object is
+   larger than the storage reserved by F Prime 4.2.2. A project configuration
+   override increases the task-handle storage so the Zephyr task implementation
+   fits safely.
+
+7. **Reduce memory use to fit the RP2350.** The standard telemetry database
+   configuration reserved more RAM than the RP2350 provides. Its bucket count
+   was reduced for this deployment, and active-component stacks were changed
+   from the generated 64 KiB value to the configured Zephyr value of 8 KiB.
+
+8. **Use Zephyr's expected configuration filename and build environment.** The
+   Kconfig file is named `prj.conf`, and the Python virtual environment must be
+   activated so that `fprime-util` finds the correct CMake, Python, West, and
+   FPP tools.
+
+With these changes, the project generates and builds successfully for
+`rpi_pico2/rp2350a/m33`, produces a UF2 image and F Prime dictionary, and uses
+approximately 9.46% of flash and 82.94% of RAM. Physical-board UART and USB CDC
+behavior still require hardware validation.
+
 This project uses F Prime `v4.2.2`, Zephyr `v4.3.0`, and a newer revision of
 `fprime-community/fprime-zephyr`. These versions do not work together without
 several project integrations and compatibility adjustments. This document
