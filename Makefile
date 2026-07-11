@@ -5,6 +5,7 @@ setup:
 	git checkout lucadev
 	git pull origin lucadev
 	python3.12 -m venv fprime-venv
+	fprime-venv/bin/python -m pip install -r requirements.txt
 	@echo "make setup complete"
 
 zephyr-setup:
