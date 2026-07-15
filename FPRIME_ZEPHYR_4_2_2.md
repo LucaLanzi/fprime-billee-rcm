@@ -109,21 +109,29 @@ Zephyr must be loaded before the top-level `project()` call:
 ```cmake
 cmake_minimum_required(VERSION 3.24.2)
 
-if (NOT BUILD_TESTING)
+get_filename_component(FPRIME_TOOLCHAIN_NAME "${CMAKE_TOOLCHAIN_FILE}" NAME)
+if (FPRIME_TOOLCHAIN_NAME STREQUAL "zephyr.cmake")
+    set(FPRIME_USE_ZEPHYR ON)
     find_package(Zephyr HINTS "${CMAKE_CURRENT_LIST_DIR}/lib/zephyr-workspace")
+else()
+    set(FPRIME_USE_ZEPHYR OFF)
 endif()
 
 project(FprimeBilleeRcm C CXX)
 ```
 
 This ordering allows Zephyr to create its `app` target and configure the board,
-SDK, compiler, Kconfig, and device tree before F Prime initializes.
+SDK, compiler, Kconfig, and device tree before F Prime initializes. Checking the
+selected toolchain also keeps native metadata builds used by commands such as
+`fprime-util new` from being incorrectly configured as Zephyr applications.
 
 The deployment must also be added to the top-level build:
 
 ```cmake
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/FprimeBilleeRcm")
-add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
+if (FPRIME_USE_ZEPHYR)
+    add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
+endif()
 ```
 
 Without the second call, `rp2350Deployment/Main.cpp` is never attached to
