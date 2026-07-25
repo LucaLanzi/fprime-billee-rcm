@@ -47,6 +47,15 @@ module rp2350Deployment {
     priority 40
 
   # ----------------------------------------------------------------------
+  # BILLEE Component instances
+  # ----------------------------------------------------------------------
+ 
+  instance subsystemManager: Billee.SubsystemManager base id 0x10015000 \
+    queue size Default.QUEUE_SIZE \
+    stack size Default.STACK_SIZE \
+    priority 44
+
+  # ----------------------------------------------------------------------
   # Queued component instances
   # ----------------------------------------------------------------------
 
@@ -64,5 +73,7 @@ module rp2350Deployment {
   instance timer: Zephyr.ZephyrRateDriver base id 0x10013000
 
   instance comDriver: Zephyr.ZephyrUartDriver base id 0x10014000
+
+  instance subsystemEnableGpio: Zephyr.ZephyrGpioDriver base id 0x10016000
 
 }

@@ -8,7 +8,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup zephyr-setup clean-zephyr zephyr-rp2350 gds-rp2350 print-env check-env
+.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds print-env check-env
 
 help: ## Show available commands
 	@echo "Available commands:"
@@ -20,7 +20,7 @@ setup: ## Create venv and install project dependencies
 	grep -q "FPRIME_FRAMEWORK_PATH" fprime-venv/bin/activate || echo 'export FPRIME_FRAMEWORK_PATH=$(PROJECT_ROOT)/lib/fprime' >> fprime-venv/bin/activate
 	@echo "make setup complete"
 
-zephyr-setup: ## Install Zephyr dependencies
+setup-zephyr: ## Install Zephyr dependencies
 	$(VENV_PYTHON) -m pip install -r requirements-zephyr.txt
 	$(VENV_PYTHON) -m west update
 	$(VENV_PYTHON) -m west packages pip --install
@@ -31,16 +31,16 @@ clean-zephyr: ## Remove Zephyr build outputs
 	rm -rf build-fprime-automatic-zephyr build-artifacts/zephyr
 	@echo "make clean-zephyr complete"
 
-zephyr-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
+build-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
 	$(VENV_FPRIME_UTIL) generate -DBOARD=rpi_pico2/rp2350a/m33 zephyr -f
 	$(VENV_FPRIME_UTIL) build zephyr
-	@echo "make zephyr-rp2350 complete"
+	@echo "make build-rp2350 complete"
 
 USBIPD_BUSID ?= 2-4
 
-.PHONY: gds-rp2350 wsl
+.PHONY: gds wsl
 
-gds-rp2350:
+gds:
 	@if [ "$(filter wsl,$(MAKECMDGOALS))" = "wsl" ]; then \
 		echo "[INFO] Attaching USB device $(USBIPD_BUSID) to WSL..."; \
 		powershell.exe -NoProfile -Command \

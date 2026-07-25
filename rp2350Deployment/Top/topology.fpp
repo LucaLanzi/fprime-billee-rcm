@@ -34,6 +34,11 @@ module rp2350Deployment {
     instance cmdSeq
 
   # ----------------------------------------------------------------------
+  # BILLEE Component instances
+  # ----------------------------------------------------------------------
+    instance subsystemManager
+
+  # ----------------------------------------------------------------------
   # Pattern graph specifiers
   # ----------------------------------------------------------------------
 
@@ -108,6 +113,7 @@ module rp2350Deployment {
       rateGroup1.RateGroupMemberOut[3] -> ComCcsds.comQueue.run
       rateGroup1.RateGroupMemberOut[4] -> ComCcsds.aggregator.timeout
       rateGroup1.RateGroupMemberOut[5] -> comDriver.schedIn
+      rateGroup1.RateGroupMemberOut[6] -> subsystemManager.run
 
       # Rate group 2
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup2] -> rateGroup2.CycleIn
