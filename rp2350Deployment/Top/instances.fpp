@@ -18,8 +18,8 @@ module rp2350Deployment {
   # ----------------------------------------------------------------------
 
   module Default {
-    constant QUEUE_SIZE = 10
-    constant STACK_SIZE = 4 * 1024
+    constant QUEUE_SIZE = 8
+    constant STACK_SIZE = 8 * 1024
   }
 
   # ----------------------------------------------------------------------

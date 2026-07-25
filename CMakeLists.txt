@@ -5,20 +5,12 @@
 
 cmake_minimum_required(VERSION 3.24.2)
 
-# Enable Zephyr only when fprime-util selected the Zephyr toolchain.  Commands
-# such as `fprime-util new` use a native cache for FPP metadata; loading Zephyr
-# for that cache prevents CMake from completing a normal F Prime configure.
-get_filename_component(FPRIME_TOOLCHAIN_NAME "${CMAKE_TOOLCHAIN_FILE}" NAME)
-if (FPRIME_TOOLCHAIN_NAME STREQUAL "zephyr.cmake")
-    set(FPRIME_USE_ZEPHYR ON)
+# Enable Zephyr when not performing a unit testing build
+if (NOT BUILD_TESTING)
     find_package(Zephyr HINTS "${CMAKE_CURRENT_LIST_DIR}/lib/zephyr-workspace")
-else()
-    set(FPRIME_USE_ZEPHYR OFF)
 endif()
 
 project(FprimeBilleeRcm C CXX)
-
-set(FPRIME_DEPLOYMENT_PROFILE "default" CACHE STRING "Selects the Zephyr deployment profile")
 
 ###
 # F' Core Setup
@@ -29,39 +21,25 @@ include("${CMAKE_CURRENT_LIST_DIR}/lib/fprime/cmake/FPrime.cmake")
 # NOTE: register custom targets between these two lines
 fprime_setup_included_code()
 
-# RP2040 needs significantly smaller framework/subtopology config than the
-# reference deployment defaults. Apply project-owned config overrides only for
-# that board so larger Zephyr targets keep the roomier defaults.
-if (FPRIME_USE_ZEPHYR AND BOARD STREQUAL "rpi_pico")
-    add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/config/rp2040-overrides")
-endif()
-
-# F Prime v4.2.2's FpySequencer stack uses std::make_unsigned without pulling
-# in <type_traits>. Force-include it from the project so lib/fprime stays clean.
-if (TARGET Svc_FpySequencer)
-    target_compile_options(Svc_FpySequencer PRIVATE
-        $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-include type_traits>
-    )
+# F Prime's reference subtopologies use desktop-sized 64 KiB task stacks.
+# RP2350 has enough RAM for the complete topology, but not for sixteen 64 KiB
+# stacks. Keep every component and use the 4 KiB stack size provisioned by
+# Zephyr for each active component.
+if (BOARD MATCHES "^rpi_pico2")
+    add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/config/rp2350-overrides")
 endif()
 
 # fprime-zephyr currently selects the newer F Prime counting-semaphore stub,
 # which is not present in the pinned F Prime v4.2.2 framework. Provide an empty
 # compatibility target because this deployment does not use that interface.
-if (FPRIME_USE_ZEPHYR AND NOT TARGET Os_CountingSemaphore_Stub)
+if (NOT TARGET Os_CountingSemaphore_Stub)
     add_library(Os_CountingSemaphore_Stub INTERFACE)
 endif()
 
 # This includes project-wide objects
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/FprimeBilleeRcm")
 
-# Register the selected Zephyr application only when Zephyr has created its app target.
-if (FPRIME_USE_ZEPHYR)
-    if (FPRIME_DEPLOYMENT_PROFILE STREQUAL "rp2040")
-        add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2040Deployment")
-    else()
-        add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
-    endif()
-endif()
+# Register the RP2350 application and attach its sources to Zephyr's app target.
+add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
 
-# Register project components for native metadata and Zephyr builds.
-add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/Components/HelloWorld/")
+# Register components included in the Zephyr Deployment

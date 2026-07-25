@@ -1,0 +1,17 @@
+/*
+ * Route Zephyr's console and the F Prime byte-stream driver through the
+ * Pico 2's USB device controller. Without this overlay, zephyr,console is
+ * uart0 on GPIO 0/1 and the board does not enumerate as a USB serial port.
+ */
+
+/ {
+    chosen {
+        zephyr,console = &cdc_acm_uart0;
+    };
+};
+
+&zephyr_udc0 {
+    cdc_acm_uart0: cdc_acm_uart0 {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};

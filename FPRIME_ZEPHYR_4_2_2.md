@@ -40,20 +40,25 @@ The required changes were:
    override increases the task-handle storage so the Zephyr task implementation
    fits safely.
 
-7. **Reduce memory use to fit the RP2350.** The standard telemetry database
-   configuration reserved more RAM than the RP2350 provides. Its bucket count
-   was reduced for this deployment, and active-component stacks were changed
-   from the generated 64 KiB value to the configured Zephyr value of 8 KiB.
+7. **Size the complete topology for embedded RAM.** No F Prime subtopology is
+   removed. The desktop queue, buffer, catalog, sequence, parameter, telemetry,
+   and 64 KiB task-stack capacities are replaced with RP2350 capacities. All 16
+   active components use the configured Zephyr task pool.
 
-8. **Use Zephyr's expected configuration filename and build environment.** The
+8. **Route the console through USB CDC ACM.** A Pico 2 board overlay creates a
+   CDC ACM UART below the USB device controller and selects it as
+   `zephyr,console`. The F Prime UART driver uses that chosen device.
+
+9. **Use Zephyr's expected configuration filename and build environment.** The
    Kconfig file is named `prj.conf`, and the Python virtual environment must be
    activated so that `fprime-util` finds the correct CMake, Python, West, and
    FPP tools.
 
 With these changes, the project generates and builds successfully for
 `rpi_pico2/rp2350a/m33`, produces a UF2 image and F Prime dictionary, and uses
-approximately 9.46% of flash and 82.94% of RAM. Physical-board UART and USB CDC
-behavior still require hardware validation.
+approximately 9.64% of flash and 73.51% of statically linked RAM. This leaves
+about 138 KiB for queues, communication buffers, catalogs, and other runtime
+heap allocations. Physical-board behavior still requires hardware validation.
 
 This project uses F Prime `v4.2.2`, Zephyr `v4.3.0`, and a newer revision of
 `fprime-community/fprime-zephyr`. These versions do not work together without
@@ -109,29 +114,21 @@ Zephyr must be loaded before the top-level `project()` call:
 ```cmake
 cmake_minimum_required(VERSION 3.24.2)
 
-get_filename_component(FPRIME_TOOLCHAIN_NAME "${CMAKE_TOOLCHAIN_FILE}" NAME)
-if (FPRIME_TOOLCHAIN_NAME STREQUAL "zephyr.cmake")
-    set(FPRIME_USE_ZEPHYR ON)
+if (NOT BUILD_TESTING)
     find_package(Zephyr HINTS "${CMAKE_CURRENT_LIST_DIR}/lib/zephyr-workspace")
-else()
-    set(FPRIME_USE_ZEPHYR OFF)
 endif()
 
 project(FprimeBilleeRcm C CXX)
 ```
 
 This ordering allows Zephyr to create its `app` target and configure the board,
-SDK, compiler, Kconfig, and device tree before F Prime initializes. Checking the
-selected toolchain also keeps native metadata builds used by commands such as
-`fprime-util new` from being incorrectly configured as Zephyr applications.
+SDK, compiler, Kconfig, and device tree before F Prime initializes.
 
 The deployment must also be added to the top-level build:
 
 ```cmake
 add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/FprimeBilleeRcm")
-if (FPRIME_USE_ZEPHYR)
-    add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
-endif()
+add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
 ```
 
 Without the second call, `rp2350Deployment/Main.cpp` is never attached to
@@ -279,7 +276,7 @@ RAM, so the default cannot link.
 ```cpp
 TLMCHAN_NUM_TLM_HASH_SLOTS = 15
 TLMCHAN_HASH_MOD_VALUE = 99
-TLMCHAN_HASH_BUCKETS = 128
+TLMCHAN_HASH_BUCKETS = 96
 ```
 
 The bucket count must remain greater than or equal to the number of telemetry
@@ -378,7 +375,7 @@ int main() {
 The `uartDevice` field remains in `TopologyState` for compatibility with the
 generated deployment structure, but it is not used by the Zephyr UART setup.
 
-## Thread stacks
+## Embedded capacity overrides
 
 `prj.conf` configures Zephyr's dynamic thread stack size as 8 KiB. F Prime
 active-component stack sizes must match that value when using the current
@@ -390,34 +387,50 @@ constant STACK_SIZE = 8 * 1024
 
 The original generated deployment requested 64 KiB per active component,
 which was unsuitable for RP2350 RAM and inconsistent with the configured
-Zephyr dynamic thread pool.
+Zephyr dynamic thread pool. The pool contains 16 stacks because the complete
+topology starts 16 active components. The upstream `fprime-zephyr` sample uses
+8 KiB as its proven default; the smaller 4 KiB experimental size did not leave
+enough margin for this complete topology.
+
+The RP2350 override also retains each service while reducing desktop-scale
+capacity:
+
+- bounded CDH, CCSDS, data-product, and file-handling message queues;
+- six normal and two file communications buffers;
+- two data-product buffers and a 16-file data-product catalog;
+- a 128-statement Fpy sequence dictionary and 2 KiB sequence stack;
+- eight parameter-database entries (the current dictionary has no parameters).
+
+These limits control how much work may be buffered simultaneously; they do not
+remove components or ports.
+
+## USB CDC ACM console
+
+`boards/rpi_pico2_rp2350a_m33.overlay` creates a `zephyr,cdc-acm-uart` device
+under the RP2350 USB device controller and selects it as `zephyr,console`.
+`prj.conf` enables the new Zephyr USB device stack and initializes CDC ACM at
+boot. Consequently, runtime firmware enumerates as a serial device instead of
+using UART0 on GPIO 0 and GPIO 1.
+
+The RP2350 entry point waits for the host to assert the CDC DTR signal before
+constructing and starting the F Prime topology. This prevents startup events
+and the communications-ready signal from being emitted before the USB class
+can transmit. GDS or another serial client must open the CDC port before F
+Prime begins running.
 
 ## Generate and build
 
 From the project root:
 
 ```bash
-source fprime-venv/bin/activate
-cd rp2350Deployment
-fprime-util generate -DBOARD=rpi_pico2/rp2350a/m33 zephyr
-cd ..
-fprime-util build zephyr
+make zephyr-rp2350
 ```
-
-To regenerate an existing cache, either purge it first or explicitly force
-generation:
-
-```bash
-fprime-util purge zephyr
-```
-
-Then rerun the generate command from `rp2350Deployment`.
 
 The verified build produced:
 
 ```text
-FLASH: 396660 B / 4 MB     9.46%
-RAM:   441624 B / 520 KB  82.94%
+FLASH: 404192 B / 4 MB      9.64%
+RAM:   391448 B / 520 KB   73.51%
 ```
 
 Important output files are:
@@ -430,28 +443,173 @@ build-artifacts/zephyr/fprime-zephyr-deployment/dict/
     rp2350DeploymentTopologyDictionary.json
 ```
 
+## WSL2 USB setup and GDS
+
+WSL2 cannot access the RP2350 USB device directly until Windows shares it
+through USB/IP. Installing `usbipd-win` and binding the device are one-time
+host setup steps. Attaching the device must be repeated after Windows or WSL
+restarts, the board is unplugged, or the board changes between BOOTSEL and
+runtime mode.
+
+### Install usbipd-win
+
+Open Windows PowerShell as Administrator and install `usbipd-win` if it is not
+already installed:
+
+```powershell
+winget install --interactive --exact dorssel.usbipd-win
+```
+
+Restart WSL after installation:
+
+```powershell
+wsl --shutdown
+```
+
+### Identify and bind the runtime device
+
+Flash `build-artifacts/zephyr.uf2`, allow the BOOTSEL drive to eject, and
+reconnect the board normally. In Windows PowerShell, list the USB devices:
+
+```powershell
+usbipd list
+```
+
+Select the runtime device with VID:PID `2fe3:0004`, shown as `USB Serial Device`
+or `F Prime UART Communication`. Do not select the `RP2 Boot` mass-storage
+device. Its BUSID may differ from this example:
+
+```text
+BUSID  VID:PID    DEVICE                    STATE
+2-4    2fe3:0004  USB Serial Device (COM4)  Not shared
+```
+
+In Windows PowerShell as Administrator, bind that BUSID:
+
+```powershell
+usbipd bind --busid 2-4
+```
+
+Binding authorizes the device for USB/IP and normally only needs to be done
+once. Run `usbipd list` again and confirm the state is `Shared`.
+
+### Attach the device to WSL
+
+Keep a WSL terminal open. In a separate, ordinary Windows PowerShell window,
+attach the bound device to the active WSL2 distribution:
+
+```powershell
+usbipd attach --wsl --busid 2-4
+usbipd list
+```
+
+The Windows-side state should now be `Attached`. Verify the Linux device from
+the WSL terminal:
+
+```bash
+lsusb
+ls -l /dev/ttyACM*
+```
+
+A working attachment resembles:
+
+```text
+2-4    2fe3:0004  USB Serial Device (COM4)  Attached
+Bus 001 Device 002: ID 2fe3:0004 NordicSemiconductor F Prime UART Communication
+crw-rw---- 1 root dialout ... /dev/ttyACM0
+```
+
+The BUSID, USB bus/device numbers, COM port, and `/dev/ttyACM` number can change.
+Use the values reported on the current machine.
+
+### Grant serial-port permission
+
+The CDC ACM device is normally accessible only to `root` and members of the
+`dialout` group. Add the current WSL user to that group:
+
+```bash
+sudo usermod -aG dialout "$USER"
+```
+
+Close all WSL terminals, then run the following from Windows PowerShell:
+
+```powershell
+wsl --shutdown
+```
+
+Reopen WSL and keep its terminal open. In Windows PowerShell, attach the USB
+device again:
+
+```powershell
+usbipd attach --wsl --busid 2-4
+```
+
+Then verify from WSL that `dialout` appears in the current user's groups and
+that the serial device exists:
+
+```bash
+id
+ls -l /dev/ttyACM*
+```
+
+If invoking `powershell.exe` from WSL reports `Exec format error`, WSL's
+Windows-executable interoperability handler is unavailable in that session.
+Run `wsl --shutdown` from a real Windows PowerShell window, reopen WSL, and run
+the `usbipd` commands directly in Windows PowerShell as shown above. USB
+attachment does not require launching PowerShell from inside WSL.
+
+### Start GDS
+
+With the RP2350 attached and `/dev/ttyACM0` available:
+
+```bash
+make gds-rp2350
+```
+
+If Linux assigned another device number, select it explicitly:
+
+```bash
+UART_DEVICE=/dev/ttyACM1 make gds-rp2350
+```
+
+Open the URL printed by GDS, normally `http://127.0.0.1:5000`. The message
+`gio: http://127.0.0.1:5000/: Operation not supported` only means WSL could not
+open the browser automatically; it does not indicate a GDS failure.
+
+USB enumeration alone does not make the GDS connection indicator green. The
+indicator turns green after GDS receives valid framed F Prime traffic. If it
+remains red, first confirm that the user belongs to `dialout`, no serial
+terminal has `/dev/ttyACM0` open, and the board was flashed from the same build
+that produced the GDS dictionary. Then run GDS with detailed logging:
+
+```bash
+./uart_gds.sh --log-to-stdout --log-level-gds DEBUG
+```
+
+The launcher uses UART at the API value 115200 and
+`space-packet-space-data-link` CCSDS framing. If `/dev/ttyACM*` disappears,
+repeat the `usbipd attach` command. To detach the device deliberately:
+
+```powershell
+usbipd detach --busid 2-4
+```
+
 ## Remaining considerations
 
 ### RAM headroom
 
-The current firmware uses approximately 83% of RP2350 RAM. New active
-components, telemetry channels, queues, or buffers may exceed available RAM.
-Use `build-artifacts/zephyr.map` to identify large static allocations and tune
-configuration deliberately.
-
-### USB CDC ACM
-
-The current Kconfig requests USB CDC ACM support, but Zephyr warns that
-`DT_HAS_ZEPHYR_CDC_ACM_UART_ENABLED` is false. A board-specific device-tree
-overlay is still needed if F Prime communication should use USB CDC instead of
-the board's chosen hardware console UART.
+The linker reports only static RAM. F Prime allocates component queues,
+communications buffers, the sequencer buffer, and catalog storage at runtime
+from the remaining heap. Recheck both the map and on-hardware startup whenever
+queue depths, buffer counts, telemetry channels, or active components grow.
 
 ### Hardware validation
 
-Successful compilation verifies CMake, FPP autocoding, C++ compilation,
-linking, UF2 generation, dictionary generation, and artifact installation. It
-does not verify UART pin selection, USB enumeration, runtime stack margins,
-filesystem behavior, or GDS communication on physical hardware.
+Successful compilation and generated-output inspection verify CMake, FPP
+autocoding, all 16 matching task stacks, CDC ACM device-tree selection, UF2
+family metadata, dictionary generation, and artifact installation. They do not
+replace a physical-board test of USB enumeration, runtime stack margins,
+filesystem behavior, or GDS traffic.
 
 ### Version upgrades
 

@@ -1,12 +1,12 @@
 register_fprime_config(
-    rp2040_project_config
+    rp2350_project_config
     CONFIGURATION_OVERRIDES
         "${CMAKE_CURRENT_LIST_DIR}/CdhCoreConfig.fpp"
         "${CMAKE_CURRENT_LIST_DIR}/ComCcsdsConfig.fpp"
-        "${CMAKE_CURRENT_LIST_DIR}/ComFprimeConfig.fpp"
         "${CMAKE_CURRENT_LIST_DIR}/DataProductsConfig.fpp"
         "${CMAKE_CURRENT_LIST_DIR}/FileHandlingConfig.fpp"
+        "${CMAKE_CURRENT_LIST_DIR}/DpCatalogCfg.hpp"
         "${CMAKE_CURRENT_LIST_DIR}/FpySequencerCfg.fpp"
-        "${CMAKE_CURRENT_LIST_DIR}/TlmChanImplCfg.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/PrmDbImplCfg.hpp"
     INTERFACE
 )

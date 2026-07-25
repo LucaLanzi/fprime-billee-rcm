@@ -18,4 +18,5 @@ register_fprime_module(
         "${CMAKE_CURRENT_LIST_DIR}/rp2350DeploymentTopology.cpp"
     DEPENDS
         Fw_Logger
+        rp2350_project_config
 )
