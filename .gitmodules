@@ -4,3 +4,6 @@
 [submodule "lib/fprime-zephyr"]
 	path = lib/fprime-zephyr
 	url = https://github.com/fprime-community/fprime-zephyr.git
+[submodule "lib/fprime-billee"]
+	path = lib/fprime-billee
+	url = https://github.com/LucaLanzi/fprime-billee.git
