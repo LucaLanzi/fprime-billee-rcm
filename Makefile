@@ -36,8 +36,24 @@ zephyr-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
 	$(VENV_FPRIME_UTIL) build zephyr
 	@echo "make zephyr-rp2350 complete"
 
-gds-rp2350: ## Start GDS on UART_DEVICE (default: /dev/ttyACM0)
+USBIPD_BUSID ?= 2-4
+
+.PHONY: gds-rp2350 wsl
+
+gds-rp2350:
+	@if [ "$(filter wsl,$(MAKECMDGOALS))" = "wsl" ]; then \
+		echo "[INFO] Attaching USB device $(USBIPD_BUSID) to WSL..."; \
+		powershell.exe -NoProfile -Command \
+			"usbipd attach --wsl --busid $(USBIPD_BUSID)" || { \
+				echo "[ERROR] Failed to attach USB device $(USBIPD_BUSID)"; \
+				exit 1; \
+			}; \
+	fi
 	./uart_gds.sh
+
+# Dummy target used only as a command-line keyword
+wsl:
+	@:
 
 print-env: ## Print Make and shell environment values
 	@echo "Make PROJECT_ROOT=$(PROJECT_ROOT)"
