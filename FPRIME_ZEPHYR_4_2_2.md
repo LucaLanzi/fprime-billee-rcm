@@ -622,3 +622,9 @@ submodule:
 3. Re-evaluate `FW_TASK_HANDLE_MAX_SIZE` against the compiler's reported size.
 4. Re-check telemetry bucket count and total RAM usage.
 5. Perform a clean generate and build.
+
+
+# To see any type of serial output run
+```
+timeout 10s dd if=/dev/ttyACM0 bs=64 status=none | xxd -g1
+```

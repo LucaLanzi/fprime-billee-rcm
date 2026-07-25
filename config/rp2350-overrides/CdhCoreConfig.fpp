@@ -5,7 +5,7 @@ module CdhCoreConfig {
         constant cmdDisp = 8
         constant events = 16
         constant tlmSend = 32
-        constant $health = 10
+        constant $health = 32
     }
 
     module StackSizes {
