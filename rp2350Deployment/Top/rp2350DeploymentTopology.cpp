@@ -33,6 +33,9 @@ static const gpio_dt_spec armEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(arm_enabl
 static const gpio_dt_spec scienceEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(science_enable), gpios);
 static const gpio_dt_spec auxEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(aux_enable), gpios);
 
+// E-STOP status input (active-low: pulled LOW = on, HIGH = off).
+static const gpio_dt_spec eStopStatusPin = GPIO_DT_SPEC_GET(DT_NODELABEL(estop_status), gpios);
+
 /**
  * \brief configure and open a single subsystem power-enable output
  *
@@ -54,6 +57,23 @@ static bool configureGpioOutput(Zephyr::ZephyrGpioDriver& driver, const gpio_dt_
     }
 
     return gpio_pin_set_dt(&pin, 0) == 0;
+}
+
+/**
+ * \brief configure and open a single subsystem status input
+ *
+ * Configures the pin as an input and hands it to the ZephyrGpioDriver instance.
+ * ZephyrGpioDriver::open() applies GPIO_INPUT itself, so the devicetree's own
+ * flags (e.g. the E-STOP line's internal pull-up) are what take effect. A
+ * failed GPIO does not abort deployment startup; it is only reported so the
+ * remaining configuration can still proceed.
+ */
+static bool configureGpioInput(Zephyr::ZephyrGpioDriver& driver, const gpio_dt_spec& pin) {
+    if (!gpio_is_ready_dt(&pin)) {
+        return false;
+    }
+
+    return driver.open(pin, Zephyr::ZephyrGpioDriver::IN) == Os::File::Status::OP_OK;
 }
 
 // The reference topology divides the incoming clock signal (1Hz) into sub-signals: 1Hz, 1/2Hz, and 1/4Hz with 0 offset
@@ -97,6 +117,9 @@ void configureTopology() {
     configureGpioOutput(armEnableGpio, armEnablePin);
     configureGpioOutput(scienceEnableGpio, scienceEnablePin);
     configureGpioOutput(auxEnableGpio, auxEnablePin);
+
+    // Bring up the E-STOP status input.
+    configureGpioInput(eStopStatusGpio, eStopStatusPin);
 }
 
 void setupTopology(const TopologyState& state) {

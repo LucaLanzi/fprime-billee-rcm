@@ -30,6 +30,19 @@
         science_enable: science-enable { gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>; };
         aux_enable: aux-enable { gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>; };
     };
+
+    /*
+     * E-STOP status input, GPIO13. Not active-low in the devicetree sense --
+     * the raw pin level is passed straight through so Fw::Logic::LOW/HIGH in
+     * software matches the physical line: pulled LOW = E-STOP on, HIGH = off.
+     * Internal pull-up so the input reads a defined HIGH (off) if the E-STOP
+     * circuit is ever disconnected rather than floating.
+     */
+    billee-gpio-inputs {
+        compatible = "gpio-keys";
+
+        estop_status: estop-status { gpios = <&gpio0 13 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; };
+    };
 };
 
 &zephyr_udc0 {

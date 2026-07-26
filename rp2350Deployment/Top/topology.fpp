@@ -46,6 +46,7 @@ module rp2350Deployment {
     instance armEnableGpio
     instance scienceEnableGpio
     instance auxEnableGpio
+    instance eStopStatusGpio
 
   # ----------------------------------------------------------------------
   # Pattern graph specifiers
@@ -154,6 +155,9 @@ module rp2350Deployment {
       subsystemManager.ArmSet -> armEnableGpio.gpioWrite
       subsystemManager.ScienceSet -> scienceEnableGpio.gpioWrite
       subsystemManager.AuxSet -> auxEnableGpio.gpioWrite
+
+      # E-STOP status input
+      subsystemManager.EStopRead -> eStopStatusGpio.gpioRead
     }
 
   }
