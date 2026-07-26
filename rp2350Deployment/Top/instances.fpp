@@ -74,6 +74,26 @@ module rp2350Deployment {
 
   instance comDriver: Zephyr.ZephyrUartDriver base id 0x10014000
 
-  instance subsystemEnableGpio: Zephyr.ZephyrGpioDriver base id 0x10016000
+  # ----------------------------------------------------------------------
+  # Subsystem power-enable GPIO driver instances
+  # ----------------------------------------------------------------------
+
+  instance drive1EnableGpio: Zephyr.ZephyrGpioDriver base id 0x10016000
+
+  instance drive2EnableGpio: Zephyr.ZephyrGpioDriver base id 0x10017000
+
+  instance drive3EnableGpio: Zephyr.ZephyrGpioDriver base id 0x10018000
+
+  instance drive4EnableGpio: Zephyr.ZephyrGpioDriver base id 0x10019000
+
+  instance drive5EnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001A000
+
+  instance drive6EnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001B000
+
+  instance armEnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001C000
+
+  instance scienceEnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001D000
+
+  instance auxEnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001E000
 
 }

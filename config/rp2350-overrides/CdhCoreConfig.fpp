@@ -5,7 +5,11 @@ module CdhCoreConfig {
         constant cmdDisp = 8
         constant events = 16
         constant tlmSend = 32
-        constant $health = 32
+        # Only 12 components ping health (NUM_PING_ENTRIES); 16 keeps headroom
+        # while freeing ~9 KiB of heap this queue was taking at 32 -- that margin
+        # is what lets dpBufferManager's setup() succeed instead of hitting a
+        # 2240-byte allocation failure on a nearly-exhausted heap.
+        constant $health = 16
     }
 
     module StackSizes {

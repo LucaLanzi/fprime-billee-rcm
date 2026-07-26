@@ -12,6 +12,7 @@
 #include <Fw/Types/MallocAllocator.hpp>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 
 // Public functions for use in main program are namespaced with deployment module rp2350Deployment
 // This is also the namespace where the topology components are instantiated by FPP.
@@ -19,6 +20,41 @@ namespace rp2350Deployment {
 
 // Instantiate a malloc allocator for cmdSeq buffer allocation
 Fw::MallocAllocator mallocator;
+
+// Subsystem power-enable outputs (billee-gpio-outputs container in the board overlay).
+// All active-high, all must come up inactive/low.
+static const gpio_dt_spec driveEnable1Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_enable_1), gpios);
+static const gpio_dt_spec driveEnable2Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_enable_2), gpios);
+static const gpio_dt_spec driveEnable3Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_enable_3), gpios);
+static const gpio_dt_spec driveEnable4Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_enable_4), gpios);
+static const gpio_dt_spec driveEnable5Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_enable_5), gpios);
+static const gpio_dt_spec driveEnable6Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_enable_6), gpios);
+static const gpio_dt_spec armEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(arm_enable), gpios);
+static const gpio_dt_spec scienceEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(science_enable), gpios);
+static const gpio_dt_spec auxEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(aux_enable), gpios);
+
+/**
+ * \brief configure and open a single subsystem power-enable output
+ *
+ * Configures the pin as an output initialized inactive/low, then hands it to the
+ * ZephyrGpioDriver instance. A failed GPIO does not abort deployment startup; it is
+ * only reported so the remaining outputs can still be brought up.
+ */
+static bool configureGpioOutput(Zephyr::ZephyrGpioDriver& driver, const gpio_dt_spec& pin) {
+    if (!gpio_is_ready_dt(&pin)) {
+        return false;
+    }
+
+    if (gpio_pin_configure_dt(&pin, GPIO_OUTPUT_INACTIVE) != 0) {
+        return false;
+    }
+
+    if (driver.open(pin, Zephyr::ZephyrGpioDriver::OUT) != Os::File::Status::OP_OK) {
+        return false;
+    }
+
+    return gpio_pin_set_dt(&pin, 0) == 0;
+}
 
 // The reference topology divides the incoming clock signal (1Hz) into sub-signals: 1Hz, 1/2Hz, and 1/4Hz with 0 offset
 Svc::RateGroupDriver::DividerSet rateGroupDivisorsSet{{{1, 0}, {2, 0}, {4, 0}}};
@@ -50,6 +86,17 @@ void configureTopology() {
 
     // Use the UART selected as Zephyr's console for F Prime communications.
     comDriver.configure(DEVICE_DT_GET(DT_CHOSEN(zephyr_console)), 115200);
+
+    // Bring up the subsystem power-enable outputs, inactive/low at boot.
+    configureGpioOutput(drive1EnableGpio, driveEnable1Pin);
+    configureGpioOutput(drive2EnableGpio, driveEnable2Pin);
+    configureGpioOutput(drive3EnableGpio, driveEnable3Pin);
+    configureGpioOutput(drive4EnableGpio, driveEnable4Pin);
+    configureGpioOutput(drive5EnableGpio, driveEnable5Pin);
+    configureGpioOutput(drive6EnableGpio, driveEnable6Pin);
+    configureGpioOutput(armEnableGpio, armEnablePin);
+    configureGpioOutput(scienceEnableGpio, scienceEnablePin);
+    configureGpioOutput(auxEnableGpio, auxEnablePin);
 }
 
 void setupTopology(const TopologyState& state) {

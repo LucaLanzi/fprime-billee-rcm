@@ -6,18 +6,51 @@ stock Raspberry Pi Pico 2 (`rpi_pico2/rp2350a/m33`). Communications use USB
 CDC ACM, so the same USB connector used for BOOTSEL becomes a serial device
 after the firmware starts.
 
-## Build
+Hardware-verified end-to-end (build, flash, GDS connection, live telemetry)
+on **macOS**. The build system and this guide also support **WSL2/Windows**,
+the platform this project was originally designed around, though that path
+has not been re-verified against the current source since macOS support was
+added.
 
-From the project root in WSL/Linux:
+## Quick start
 
 ```bash
-make zephyr-rp2350
+make setup          # create the Python venv
+make setup-zephyr    # fetch Zephyr + SDK (slow, one-time)
+make build-rp2350    # build build-artifacts/zephyr.uf2
 ```
 
-The flashable image is `build-artifacts/zephyr.uf2`. Run `make help` to see all
-project commands.
+Then flash and connect using whichever platform section below matches your
+host: [macOS](#flash-and-run--macos) or [WSL2/Windows](#flash-and-run--wsl2windows).
 
-## Flash
+## Flash and run — macOS
+
+1. Hold **BOOTSEL** while plugging the Pico 2 into your Mac (or while pressing
+   its reset button, if the board has one wired).
+2. It mounts as a `RP2350` (or `RPI-RP2`) mass-storage volume. Copy the UF2
+   over, or let Make do it once you know the volume path:
+   ```bash
+   make cpfirm mac                          # copies to $MAC_BOOTSEL_VOLUME
+   MAC_BOOTSEL_VOLUME=/Volumes/RP2350 make cpfirm mac   # override if it mounts elsewhere
+   ```
+3. The board reboots automatically once the copy finishes and re-enumerates as
+   a USB CDC-ACM serial device, typically `/dev/cu.usbmodem2101`. Confirm with:
+   ```bash
+   ls -la /dev/cu.usbmodem*
+   ```
+4. Start GDS:
+   ```bash
+   make gds mac                             # uses $MAC_UART_DEVICE, default /dev/tty.usbmodem2101
+   ```
+   Open the printed URL (normally `http://127.0.0.1:5000`) and check the
+   Events/Channels tabs for live data.
+
+If `make gds mac` shows no traffic even though the port exists, see
+[15.10 macOS: GDS connects but shows no traffic](#1510-macos-gds-connects-but-shows-no-traffic)
+before assuming the firmware is broken — a stuck background `fprime-gds`
+process silently holding the port is a common, easy-to-miss cause.
+
+## Flash and run — WSL2/Windows
 
 1. Unplug the Pico 2.
 2. Hold BOOTSEL while plugging it into Windows.
@@ -36,8 +69,6 @@ Check Windows PowerShell with:
 Get-PnpDevice -Class Ports | Format-Table Status,FriendlyName,InstanceId
 ```
 
-## Run GDS from WSL2
-
 Windows owns USB devices by default. Install `usbipd-win`, then, after the
 flashed board has rebooted, identify and attach the **USB Serial Device**:
 
@@ -52,13 +83,13 @@ while attaching. In WSL, verify the result and start GDS:
 
 ```bash
 ls -l /dev/ttyACM*
-make gds-rp2350
+make gds wsl
 ```
 
 If the device is not `/dev/ttyACM0`, select it explicitly:
 
 ```bash
-UART_DEVICE=/dev/ttyACM1 make gds-rp2350
+UART_DEVICE=/dev/ttyACM1 make gds
 ```
 
 While attached to WSL, the device is unavailable to Windows applications. To
@@ -68,12 +99,8 @@ return it to Windows:
 usbipd detach --busid <BUSID>
 ```
 
-See the end-user
-[RP2350 F´/Zephyr Software Design Description](docs/RP2350_FPRIME_ZEPHYR_SDD.md)
-for the complete fresh-machine procedure, architecture, verification gates,
-and troubleshooting guide. See
-[FPRIME_ZEPHYR_4_2_2.md](FPRIME_ZEPHYR_4_2_2.md) for compatibility-layer
-details.
+See section 15 below for troubleshooting, and section 5.6 for the F´ 4.2.2 /
+fprime-zephyr / Zephyr 4.3 compatibility-layer details.
 
 
 # F´ on RP2350 with Zephyr
@@ -89,9 +116,9 @@ details.
 | fprime-zephyr | `8ef1f4e62c6ee4f04598fdb25ceb82b645687af5` |
 | Zephyr | `v4.3.0` |
 | Zephyr SDK | `0.17.4`, ARM toolchain |
-| Host validated | Ubuntu 22.04 under WSL2 |
+| Host validated | macOS (hardware-verified); Ubuntu 22.04 under WSL2 (original design target, not re-verified against current source) |
 | Firmware transport | USB CDC ACM carrying F´ CCSDS frames |
-| Document status | Build-verified; physical-board verification required |
+| Document status | Hardware-verified on macOS: builds, flashes, boots, and exchanges live telemetry/commands over GDS |
 
 ## 1. Purpose
 
@@ -114,14 +141,14 @@ while the board is still in BOOTSEL mode.
 
 This guide covers:
 
-- fresh WSL2/Ubuntu host setup;
+- fresh macOS or WSL2/Ubuntu host setup;
 - project and submodule checkout;
 - Python, West, Zephyr module, and SDK installation;
 - the RP2350-specific F´ and Zephyr design;
 - clean firmware generation and build;
-- UF2 validation and BOOTSEL flashing;
-- Windows USB/COM inspection;
-- passing the runtime USB device into WSL2;
+- UF2 validation and BOOTSEL flashing (both platforms);
+- macOS USB serial inspection, or Windows USB/COM inspection plus passing the
+  runtime device into WSL2;
 - starting F´ GDS with the correct dictionary and framing;
 - acceptance checks and troubleshooting.
 
@@ -144,10 +171,10 @@ clock, pin, and USB wiring. Do not assume the Pico 2 board target is correct.
 | R-02 | Produce an RP2350-compatible UF2 | Zephyr emits family ID `0xe48bff57` |
 | R-03 | Expose runtime communications over the board's USB connector | CDC ACM devicetree overlay |
 | R-04 | Preserve the complete selected F´ topology | CDH, CCSDS, data products, file handling, sequencing, health, telemetry, and rate groups remain present |
-| R-05 | Start every active component | 16-entry dynamic thread pool with matching 8 KiB stacks |
-| R-06 | Leave sufficient runtime heap | Embedded queue, buffer, catalog, parameter, sequence, and telemetry capacities |
-| R-07 | Use the topology's wire protocol in GDS | `space-packet-space-data-link` framing |
-| R-08 | Support GDS from WSL2 | `usbipd-win` attachment plus `/dev/ttyACM*` launcher |
+| R-05 | Start every active component | 17-entry dynamic thread pool with matching 8 KiB stacks |
+| R-06 | Leave sufficient runtime heap | Trimmed per-component queue depths (see Section 5.5); embedded buffer, catalog, parameter, sequence, and telemetry capacities |
+| R-07 | Use the topology's wire protocol in GDS | `space-packet-space-data-link` framing (fprime-gds's default) |
+| R-08 | Support GDS from macOS or WSL2 | `make gds mac` / `make gds wsl`; `usbipd-win` attachment plus `/dev/ttyACM*` or `/dev/cu.usbmodem*` launcher |
 
 ## 4. System architecture
 
@@ -157,19 +184,15 @@ clock, pin, and USB wiring. Do not assume the Pico 2 board target is correct.
 flowchart LR
     Browser["Web browser<br/>F´ GDS UI"]
     GDS["fprime-gds<br/>CCSDS framing"]
-    TTY["WSL2<br/>/dev/ttyACM0"]
-    USBIP["usbipd-win<br/>USB/IP bridge"]
-    WinUSB["Windows USB host<br/>USB Serial Device"]
+    Host["Host serial device<br/>WSL2: /dev/ttyACM0 (via usbipd)<br/>macOS: /dev/cu.usbmodem*"]
     CDC["RP2350 USB controller<br/>Zephyr CDC ACM UART"]
     Driver["ZephyrUartDriver"]
     CCSDS["F´ ComCcsds<br/>framing and queues"]
     Topology["Full F´ topology"]
 
     Browser <--> GDS
-    GDS <--> TTY
-    TTY <--> USBIP
-    USBIP <--> WinUSB
-    WinUSB <--> CDC
+    GDS <--> Host
+    Host <--> CDC
     CDC <--> Driver
     Driver <--> CCSDS
     CCSDS <--> Topology
@@ -179,12 +202,21 @@ USB CDC is a byte stream. The baud-rate value is retained for the UART API and
 GDS configuration, but USB does not transmit bits at a physical 115200-baud
 UART clock.
 
-The entry point waits for the host to assert the CDC DTR signal before starting
-the F´ topology. Opening `/dev/ttyACM0` from GDS releases startup, ensuring the
-USB class is ready before startup events and the communications-ready signal
-are emitted.
+The entry point sleeps for a flat 3 seconds before constructing the F´
+topology, to let the USB CDC-ACM class finish enumerating before anything
+tries to write to it — writes attempted too early are silently dropped, not
+queued. An earlier version of this gate instead polled for the host to assert
+the CDC DTR signal and blocked indefinitely until it did; that was replaced
+because not every host's CDC-ACM driver relays DTR reliably (see 5.7), and a
+bounded delay is simpler and works everywhere. If startup events are ever
+observed to still be dropped in practice, extend the delay rather than
+reintroducing a DTR wait.
 
 ### 4.2 Flash and runtime USB states
+
+This is the WSL2/Windows flow specifically, since it has an extra hop
+(`usbipd`) that macOS doesn't need — on macOS, step 4 is simply "the board
+re-enumerates as `/dev/cu.usbmodem*` directly usable by GDS."
 
 ```mermaid
 sequenceDiagram
@@ -202,7 +234,7 @@ sequenceDiagram
     RP2350->>Windows: Enumerate runtime CDC ACM device
     User->>Windows: usbipd attach runtime device to WSL
     Windows->>WSL: Create /dev/ttyACM0
-    User->>GDS: make gds-rp2350
+    User->>GDS: make gds wsl
     GDS->>RP2350: Commands over CCSDS/CDC ACM
     RP2350-->>GDS: Events and telemetry
 ```
@@ -250,25 +282,45 @@ The file `boards/rpi_pico2_rp2350a_m33.overlay` now:
 
 ### 5.2 Too few task slots
 
-The complete topology starts 16 active-component tasks, while the original
+The complete topology starts 17 active-component tasks (one more than the
+original 16 once `Billee.SubsystemManager` was added), while the original
 Zephyr configuration provisioned 12 dynamic stacks. Tasks beyond the pool
 capacity could not start.
 
 `prj.conf` now sets:
 
 ```text
-CONFIG_DYNAMIC_THREAD_POOL_SIZE=16
+CONFIG_DYNAMIC_THREAD_POOL_SIZE=17
 ```
+
+Don't set this from a guess — count the actual `.start()` calls generated in
+`rp2350DeploymentTopologyAc.cpp::startTasks()` after any topology change. This
+value must be *exactly* the active-task count, not merely `>=` it: unlike
+most "headroom" settings, over-provisioning here isn't free — every extra
+slot costs a full `CONFIG_DYNAMIC_THREAD_STACK_SIZE` of static RAM whether or
+not a task ever uses it, and that RAM competes directly with the heap (see
+5.5 below).
 
 ### 5.3 Stack-size mismatch
 
 F´ reference subtopologies requested 64 KiB task stacks. Zephyr's dynamic
 thread pool was configured for a different fixed stack size. The Zephyr task
 allocator requires every dynamically allocated F´ task stack to request the
-configured size exactly.
+configured size exactly, and this project-controlled value
+(`Default.STACK_SIZE` in `rp2350Deployment/Top/instances.fpp`) isn't the only
+place stack size is set: `config/rp2350-overrides/CdhCoreConfig.fpp`
+independently pins `cmdDisp`/`events`/`tlmSend`'s stacks to a hardcoded
+`8 * 1024`, so those three tasks must be updated too if this value ever
+changes. Miss one and boot fails with `ActiveComponentBase.cpp` asserting
+`Os::Task::Status::ERROR_RESOURCES` (ask for a stack the pool's per-slot
+size can't satisfy) partway through `startTasks()`.
 
-All 16 active components and `CONFIG_DYNAMIC_THREAD_STACK_SIZE` now use 8 KiB.
-The Zephyr main thread remains 8 KiB to provide initialization headroom.
+All 17 active components and `CONFIG_DYNAMIC_THREAD_STACK_SIZE` use 8 KiB.
+The Zephyr main thread also stays at 8 KiB (a separate, independent setting —
+it isn't an F´ task stack, so it isn't part of the "must match" constraint).
+8 KiB was deliberately kept rather than shrunk to claw back heap room for the
+reasons in 5.5 below; see that section for how the heap shortfall was
+actually resolved instead.
 
 ### 5.4 Desktop capacities exceeded RP2350 RAM
 
@@ -282,10 +334,11 @@ the same services for an embedded deployment:
 
 | Resource | RP2350 capacity |
 | --- | ---: |
-| Active task stacks | 16 × 8 KiB |
+| Active task stacks | 17 × 8 KiB |
 | CDH command queue | 8 |
 | CDH event queue | 16 |
-| CDH telemetry queue | 32 |
+| CDH health-ping queue | 16 |
+| CCSDS `comQueue` async-port queue | 16 |
 | Communications packet queues | 16 events, 32 telemetry, 4 file |
 | Communications buffers | 6 normal + 2 file, 1024 bytes each |
 | Data-product buffers | 2 × 1024 bytes |
@@ -293,35 +346,224 @@ the same services for an embedded deployment:
 | Fpy sequence dictionary | 128 statements, 8 arguments |
 | Fpy sequence stack | 2048 bytes |
 | Parameter database | 8 entries |
-| Telemetry database | 96 buckets for the current 89 channels |
+| Telemetry database | 96 buckets |
 
 These are capacity limits, not feature exclusions. If the topology grows,
-recalculate them and maintain the invariants in Section 13.
+recalculate them and maintain the invariants in Section 14.
+
+### 5.5 The real remaining bug: heap exhaustion from per-component queue depths
+
+Getting the numbers in 5.1–5.4 right was necessary but not sufficient — the
+firmware still built and linked cleanly, flashed, and enumerated as a USB
+serial device, yet produced *no output at all* on the wire. That silence had
+nothing to do with USB, DTR, or the console; it took directly instrumenting
+`initComponents()` with a binary-search heap probe (find the largest single
+`malloc()` that still succeeds) between every component's `.init()` call to
+find the actual cause.
+
+Every F´ active/queued component allocates its own async-port message queue
+from the heap during `.init()` — sized as `queue depth × largest message
+size` for that component, roughly 565–570 bytes per queue slot in this
+topology. That's ordinary, expected F´ behavior, not a bug by itself. The
+problem was that `initComponents()` alone consumed **~86 KiB** of the
+~123 KiB heap the linker's map said should be free (`_end` to top of RAM,
+Zephyr's `CONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE=-1` auto-sizing), leaving too
+little for two allocations that happen afterward, during `configComponents()`
+and this project's own `configureTopology()`:
+
+- `Svc::BufferManager` (`dpBufferManager`, the data-product buffer pool)
+  asserting in `BufferManagerComponentImpl.cpp:163` on a failed 2240-byte
+  allocation;
+- once that was fixed, `Svc::CmdSequencer`'s 5 KiB command-sequence buffer
+  allocation failing the same way, asserting in `Fw/Types/Serializable.cpp`
+  when the resulting null pointer got passed into a serialize buffer.
+
+The single largest per-component consumer, by a wide margin, was
+`CdhCore::health`'s ping queue: **18 KiB** for a queue depth of 32, even
+though only 12 components actually ping health
+(`NUM_PING_ENTRIES` in the generated topology). `ComCcsds::comQueue`'s own
+async-port queue was next at **13.6 KiB** for a depth of 24. Reducing both to
+16 (`config/rp2350-overrides/CdhCoreConfig.fpp` and `ComCcsdsConfig.fpp`)
+freed enough margin for both failing allocations, with headroom to spare.
+
+Two things that looked like plausible fixes turned out not to be, and are
+recorded here so they aren't retried blindly:
+
+- **A fixed-size static heap arena** (`CONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE`
+  set to an explicit byte count instead of left at `-1`/auto) reproducibly
+  made boot fail *earlier and harder* than the undersized auto-heap did —
+  confirmed with a reliable capture method, not a fluke. Left unset
+  deliberately; if heap headroom is needed again, prefer trimming queue
+  depths as above.
+- **Shrinking `CONFIG_DYNAMIC_THREAD_STACK_SIZE`** below 8192 to free static
+  RAM for the heap doesn't work without also updating
+  `config/rp2350-overrides/CdhCoreConfig.fpp` (see 5.3) — an unmatched value
+  fails immediately with `ERROR_RESOURCES`. A non-power-of-two size (6144 was
+  tried) failed the same way even after matching both places, likely an ARM
+  Cortex-M33 MPU stack-guard alignment requirement; 4096 (a proper power of
+  two, and what the sibling
+  [PROVES flight controller reference project](https://github.com/Open-Source-Space-Foundation/proves-core-reference)
+  runs successfully with a larger, more-threaded topology on the same
+  `rp2350a/m33` core) also worked mechanically, but was reverted in favor of
+  the queue-depth fix once it was clear 8 KiB stacks were never actually the
+  scarce resource.
+
+If a future change reintroduces a heap-allocation failure, the diagnostic
+technique that actually found this — a binary-search `malloc()` probe
+between successive initialization steps, comparing against a reliable serial
+capture (see 5.7) — is far more direct than guessing at capacity numbers.
+
+### 5.6 F Prime 4.2.2 / fprime-zephyr / Zephyr 4.3 compatibility layer
+
+F´ `v4.2.2` and this revision of `fprime-zephyr` come from different points
+in F´'s development and are not fully compatible out of the box. This
+project carries a small, self-contained compatibility layer rather than
+patching either submodule directly.
+
+**Load Zephyr before F´.** The top-level `CMakeLists.txt` initializes Zephyr
+(`find_package(Zephyr ...)`) before calling `project()`, so Zephyr can select
+the board, SDK, compiler, device tree, and application target before F´
+configures the deployment:
+
+```cmake
+cmake_minimum_required(VERSION 3.24.2)
+
+if (NOT BUILD_TESTING)
+    find_package(Zephyr HINTS "${CMAKE_CURRENT_LIST_DIR}/lib/zephyr-workspace")
+endif()
+
+project(FprimeBilleeRcm C CXX)
+```
+
+**Attach the deployment to Zephyr's `app` target.** Without this, Zephyr's
+`app` target never receives `Main.cpp` or the topology, and configuration
+fails with `No SOURCES given to target: app`:
+
+```cmake
+add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/FprimeBilleeRcm")
+add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/rp2350Deployment")
+```
+
+**Project-local deployment registration.** The `fprime-zephyr` revision this
+project pins expects an installation helper
+(`lib/fprime/cmake/target/fprime_install.cmake`) and an
+`Os_CountingSemaphore_Stub` implementation target, neither of which exists in
+F´ 4.2.2. `cmake/register_fprime_zephyr_4_2_2_deployment.cmake` supplies both:
+it mirrors `fprime-zephyr`'s registration behavior (adds `Main.cpp` to the
+`app` target, links the topology, creates the dictionary and artifact
+install targets) and runs the generated installer directly instead of
+calling the missing helper. An empty `Os_CountingSemaphore_Stub` interface
+target is defined after F´ and its libraries load — safe here because this
+deployment never uses the newer counting-semaphore interface. If a future F´
+upgrade adds real support for either, remove the corresponding shim rather
+than keep it around unnecessarily.
+
+**Zephyr task-handle size.** F´ 4.2.2 defaults `FW_TASK_HANDLE_MAX_SIZE` to
+40 bytes; Zephyr 4.3's `Os::Zephyr::Task::ZephyrTask` is 168 bytes, which
+fails to compile (`static assertion failed: Handle size not large enough`)
+against that default. `FprimeBilleeRcm/Config/PlatformCfg.fpp` overrides it
+to 192 bytes (with headroom for alignment).
+
+**Telemetry database size.** F´'s default `TlmChanImplCfg.hpp` reserves 500
+hash buckets, each sized for a full telemetry value — roughly 590 KiB total,
+which alone exceeds the RP2350's 520 KiB RAM. `FprimeBilleeRcm/Config/TlmChanImplCfg.hpp`
+reduces this to 96 buckets. This must stay `>=` the deployment's actual
+telemetry-channel count; recheck after adding channels.
+
+**Linux-only components replaced with Zephyr equivalents:**
+
+| Linux component | Zephyr component |
+| --- | --- |
+| `Svc.LinuxTimer` | `Zephyr.ZephyrRateDriver` |
+| `Drv.LinuxUartDriver` | `Zephyr.ZephyrUartDriver` |
+| `Svc.ChronoTime` | `Zephyr.ZephyrTime` |
+
+`Svc.ChronoTime` specifically can't be used here — its standard-library clock
+path needs `gettimeofday`, which this Zephyr configuration doesn't provide.
+
+**UART setup.** The UART driver uses Zephyr's chosen console device
+(`DT_CHOSEN(zephyr_console)`) at 115200 baud. Unlike `Drv::LinuxUartDriver`,
+`Zephyr::ZephyrUartDriver` has no dedicated POSIX receive thread — its
+`schedIn` port must be driven periodically by a rate group
+(`rateGroup1.RateGroupMemberOut[5] -> comDriver.schedIn`).
+
+**Rate driver.** `Zephyr::ZephyrRateDriver` wraps a Zephyr kernel timer,
+configured in milliseconds, started once, then cycled continuously in
+`startRateGroups()` (`timer.configure()` → `timer.start()` →
+`while (true) { timer.cycle(); }`) — this loop runs for the firmware's
+lifetime; there's no desktop-style Ctrl-C teardown path.
+
+**Config filename.** The Kconfig file must be named `prj.conf` — Zephyr
+auto-detects that name specifically; `proj.conf` is not recognized.
+
+### 5.7 macOS-specific gotchas
+
+None of these are bugs in the firmware; they're host-side traps that
+repeatedly produced misleading "it's not working" symptoms during bring-up,
+worth knowing about before re-debugging them from scratch.
+
+- **Raw `cat`/`stty` captures are not reliable on macOS.** Neither tool
+  asserts the CDC-ACM DTR line the way a real serial client does, and this
+  firmware's boot path doesn't depend on DTR at all (see 5.6's UART setup) —
+  so DTR isn't the reason `cat` misses data, but something about how macOS's
+  native CDC-ACM driver handles a bare `open()` without it evidently is. A
+  small `pyserial` script that explicitly sets `port.dtr = True` on open
+  reliably captured boot output when raw `cat` reliably didn't. If you need
+  to manually inspect what a board is transmitting, use `pyserial`
+  (`serial.Serial(device, baud); port.dtr = True; port.read(...)`), not
+  `cat`/`dd`/`stty`.
+- **The port can end up silently held by a stale process.** A backgrounded
+  `fprime-gds` (or its `comm`/`CustomDataHandlers` sub-processes) that wasn't
+  fully killed keeps `/dev/cu.usbmodem*` open indefinitely, and a *second*
+  `fprime-gds` session can start up cleanly against the same dictionary
+  without ever reporting a conflict — it just never receives anything. If
+  GDS or a raw capture reports total silence, check for leftover
+  `fprime_gds.executables.*` processes (`ps aux | grep fprime_gds`) before
+  assuming the firmware is broken.
+- **`/dev/cu.*` vs `/dev/tty.*`.** Both refer to the same underlying USB CDC
+  device, but `/dev/cu.*` ("callout") is the correct one for a program
+  actively opening the connection; `/dev/tty.*` is dial-in-oriented and can
+  behave differently. This project's `MAC_UART_DEVICE` default and
+  `uart_gds.sh` both use `/dev/tty.usbmodem2101` and this has worked in
+  practice, but if a capture behaves strangely, try the `/dev/cu.*` path.
+- **Build failures can hide behind a `| tail -N` pipe without failing the
+  overall command.** `some-build-command | tee log | tail -60` reports the
+  exit status of `tail` (always 0), not the build — so a real link failure
+  partway through can go completely unnoticed while a *stale* `.uf2` from an
+  earlier successful build keeps getting reflashed and tested. This cost
+  significant time during bring-up: several "still not working" reports
+  turned out to be repeated tests of an old binary, not the change actually
+  being tested. Check exit codes explicitly (`cmd; echo $?`, or redirect to a
+  log file and check `$?` directly) rather than trusting a piped command's
+  own exit status.
 
 ## 6. Verified baseline
 
-The final clean build was verified with:
+This build was verified end-to-end on real hardware: it links, flashes,
+boots, enumerates as a USB CDC-ACM serial device, and exchanges live
+telemetry and commands with `fprime-gds` over the CCSDS space-packet
+framing.
 
 ```text
-FLASH: 404192 B / 4 MB      9.64%
-RAM:   391448 B / 520 KB   73.51%
+FLASH: 417640 B / 4 MB      9.96%
+RAM:   406648 B / 520 KB   76.37%
 UF2 family: RP2350 (0xe48bff57)
-Generated active stacks: 16 × 8192 bytes
+Generated active stacks: 17 × 8192 bytes
 USB runtime VID:PID: 2FE3:0004
 ```
 
-The linker-reported RAM is static usage. The remaining approximately 138 KiB
-is needed for F´ queues, buffer pools, catalogs, the sequence buffer, and other
-runtime allocations.
+The linker-reported RAM is static usage only. The remaining ~123 KiB
+(auto-sized heap, `_end` to top of RAM) is what F´'s per-component queues,
+buffer pools, catalogs, and the sequence buffer allocate at runtime — see
+5.5 for why that number is tighter than it looks and how it was actually
+verified sufficient (a runtime heap-probe, not just the static linker
+report).
 
-The reference UF2 produced during validation had this SHA-256:
-
-```text
-c6b905fa9b8fe2e7a80e1bc48cc5a98b7c167e84c132db78a06d9a42abd30120
-```
-
-A later source change should produce a different hash; a different hash alone
-does not indicate a failure.
+A given source tree's UF2 will hash differently across otherwise-identical
+builds (embedded build timestamps, path strings, etc.), so no fixed
+reference hash is recorded here — a different hash alone never indicates a
+failure. Verify a build by its behavior (Section 13's acceptance checklist),
+not by comparing hashes.
 
 ## 7. Required equipment and host software
 
@@ -329,13 +571,21 @@ does not indicate a failure.
 
 - Raspberry Pi Pico 2 with RP2350A;
 - known-good USB data cable;
-- Windows PC with WSL2, or a native Linux PC;
+- a Mac, a Windows PC with WSL2, or a native Linux PC;
 - a direct USB port for initial troubleshooting, avoiding an unpowered hub.
 
 Some USB cables supply power but have no data wires. Such a cable can power the
 board without ever creating a drive or COM port.
 
-### 7.2 Windows and WSL2
+### 7.2 macOS
+
+No extra host software beyond Xcode Command Line Tools (`xcode-select --install`,
+for `git`/`make`/a C toolchain) and Python 3.9+ (via Homebrew or
+[python.org](https://python.org)) — the Zephyr SDK and toolchain are fetched
+into the project's own venv by `make setup-zephyr`. There's no USB/IP hop to
+set up; the board's CDC-ACM device appears directly as `/dev/cu.usbmodem*`.
+
+### 7.3 Windows and WSL2
 
 Recommended:
 
@@ -358,7 +608,7 @@ WSL2:
 wsl --list --verbose
 ```
 
-### 7.3 Ubuntu packages
+### 7.4 Ubuntu packages
 
 In WSL Ubuntu:
 
@@ -382,7 +632,8 @@ The project installs CMake 3.26.0 inside its virtual environment, so Ubuntu
 
 ## 8. Fresh project setup
 
-Run all Linux commands from WSL, not PowerShell.
+On WSL2, run all commands below from the WSL shell, not PowerShell. On
+macOS, run them from Terminal as-is.
 
 ### 8.1 Clone
 
@@ -405,8 +656,14 @@ Expected pinned revisions:
 8ef1f4e62c6ee4f04598fdb25ceb82b645687af5 lib/fprime-zephyr
 ```
 
-Do not independently update either submodule. The project contains a small
-compatibility layer for this exact F´/fprime-zephyr combination.
+`lib/fprime` and `lib/fprime-zephyr` are third-party pins — do not
+independently update either; the project contains a small compatibility
+layer for this exact F´/fprime-zephyr combination (Section 5.6).
+`lib/fprime-billee` is this project's own component library (the
+`Billee.SubsystemManager` component that drives the drivetrain/arm/science/
+aux power-enable GPIOs) and lives on its own `lucadev` branch — its history
+moves independently of, and should stay in sync with, the outer repo's
+`lucadev` branch.
 
 ### 8.2 Create the Python environment
 
@@ -462,7 +719,7 @@ ARM toolchain. The validated SDK version is 0.17.4.
 From the repository root:
 
 ```bash
-make zephyr-rp2350
+make build-rp2350
 ```
 
 The target removes the previous Zephyr build, regenerates for
@@ -473,7 +730,7 @@ Successful output ends with memory usage and:
 
 ```text
 Converted to uf2
-make zephyr-rp2350 complete
+make build-rp2350 complete
 ```
 
 Required artifacts:
@@ -501,7 +758,7 @@ Expected:
 ```text
 CONFIG_MAIN_STACK_SIZE=8192
 CONFIG_DYNAMIC_THREAD_STACK_SIZE=8192
-CONFIG_DYNAMIC_THREAD_POOL_SIZE=16
+CONFIG_DYNAMIC_THREAD_POOL_SIZE=17
 ```
 
 Check the USB node and chosen console:
@@ -520,7 +777,7 @@ grep -n '= 8192' \
   build-fprime-automatic-zephyr/rp2350Deployment/Top/rp2350DeploymentTopologyAc.hpp
 ```
 
-There must be 16 active-component stack entries.
+There must be 17 active-component stack entries.
 
 Check the UF2 family:
 
@@ -700,7 +957,7 @@ Expected device identity and serial node:
 From the repository root in WSL:
 
 ```bash
-make gds-rp2350
+make gds wsl
 ```
 
 The launcher verifies:
@@ -720,7 +977,7 @@ It then starts GDS with:
 If Linux assigned a different number:
 
 ```bash
-UART_DEVICE=/dev/ttyACM1 make gds-rp2350
+UART_DEVICE=/dev/ttyACM1 make gds wsl
 ```
 
 Open the URL printed by GDS, normally:
@@ -737,7 +994,7 @@ connect, confirm GDS is still running and no other process already owns port
 
 The setup is accepted only when all of the following pass:
 
-- [ ] `make zephyr-rp2350` exits successfully.
+- [ ] `make build-rp2350` exits successfully.
 - [ ] Static linked RAM remains below the RP2350's 520 KiB.
 - [ ] UF2 inspection reports family `0xe48bff57`.
 - [ ] The BOOTSEL drive ejects after copying the UF2.
@@ -745,7 +1002,7 @@ The setup is accepted only when all of the following pass:
 - [ ] Windows shows `USB Serial Device (COMx)`.
 - [ ] `usbipd list` shows the runtime device as attached.
 - [ ] WSL shows `/dev/ttyACM*`.
-- [ ] `make gds-rp2350` starts without a missing-device error.
+- [ ] `make gds wsl` starts without a missing-device error.
 - [ ] GDS displays events or telemetry from the board.
 - [ ] A safe command sent from GDS receives a command response.
 
@@ -761,7 +1018,7 @@ Maintain these rules when adding components or changing capacities.
 CONFIG_DYNAMIC_THREAD_POOL_SIZE >= number of active F´ tasks
 ```
 
-The present value and count are both 16. Adding one active component requires
+The present value and count are both 17. Adding one active component requires
 at least one additional pool entry.
 
 ### 14.2 Dynamic stack size
@@ -826,7 +1083,7 @@ flowchart TD
     WSL -- Yes --> Attach["usbipd bind + attach<br/>the runtime device"]
     Attach --> ACM{"Does /dev/ttyACM* exist?"}
     ACM -- No --> Kernel["Run wsl --update, reattach,<br/>inspect lsusb and dmesg"]
-    ACM -- Yes --> GDS["Run make gds-rp2350<br/>with correct UART_DEVICE"]
+    ACM -- Yes --> GDS["Run make gds wsl<br/>with correct UART_DEVICE"]
     GDS --> Traffic{"Events or telemetry?"}
     Traffic -- No --> Protocol["Confirm CCSDS framing,<br/>dictionary, permissions, and logs"]
     Traffic -- Yes --> Done["Connection operational"]
@@ -845,7 +1102,7 @@ This is below the F´/Zephyr layer; firmware is not running in BOOTSEL mode.
 
 ### 15.2 UF2 copies, but the board remains in BOOTSEL
 
-1. Rebuild with `make zephyr-rp2350`.
+1. Rebuild with `make build-rp2350`.
 2. Inspect the UF2 and confirm RP2350 family `0xe48bff57`.
 3. Ensure the file copied is `build-artifacts/zephyr.uf2`, not an RP2040 image.
 4. Wait for the volume to eject before unplugging.
@@ -890,7 +1147,7 @@ ls -l /dev/ttyACM*
 If another node exists:
 
 ```bash
-UART_DEVICE=/dev/ttyACM1 make gds-rp2350
+UART_DEVICE=/dev/ttyACM1 make gds wsl
 ```
 
 If none exists, repeat the USB/IP attachment procedure.
@@ -918,7 +1175,7 @@ If none exists, repeat the USB/IP attachment procedure.
 Build through Make from the repository root:
 
 ```bash
-make zephyr-rp2350
+make build-rp2350
 ```
 
 The Makefile prepends `fprime-venv/bin` to `PATH`, ensuring the pinned CMake
@@ -947,31 +1204,69 @@ This usually indicates stack or heap pressure:
 5. test with a serial log before GDS takes ownership of the port.
 
 Do not solve this by removing arbitrary subtopologies unless the mission design
-actually does not need them.
+actually does not need them. Section 5.5 covers how this specific failure
+mode (heap exhaustion from per-component queue depths) was diagnosed and
+fixed on this project — a runtime `malloc()` heap probe pinpointed it far
+faster than guessing at capacity numbers.
+
+### 15.10 macOS: GDS connects but shows no traffic
+
+Before suspecting the firmware, check for a stale process silently holding
+the port — this is by far the most common cause on macOS, since a second
+`fprime-gds` session starts up cleanly against the same dictionary even when
+another one already owns the device, and just never receives anything:
+
+```bash
+ps aux | grep fprime_gds
+```
+
+Kill any `fprime_gds.executables.*` processes left over from a previous
+session (including `CustomDataHandlers` sub-processes), then retry. If
+traffic still doesn't appear:
+
+1. Confirm the port path: `ls -la /dev/cu.usbmodem*`, and try the `/dev/cu.*`
+   path specifically rather than `/dev/tty.*` if you're driving the port
+   with a custom script (see 5.7).
+2. Confirm the board didn't drop back into BOOTSEL mode — check
+   `/Volumes` for an `RP2350`/`RPI-RP2` volume; if present, it's still in
+   the bootloader, not running firmware.
+3. For manual inspection, use a small `pyserial` script that explicitly
+   opens the port and reads from it, not `cat`/`dd`/`stty` (see 5.7) — those
+   have repeatedly produced false "silent" readings on macOS even when the
+   board was transmitting normally.
+4. Confirm the flashed `.uf2` is actually the one you think it is — if a
+   build command's exit status was masked by a pipe (`| tail`, see 5.7),
+   the `build-artifacts/zephyr.uf2` on disk may be stale from an earlier
+   build. Rebuild with explicit exit-code checking and reflash before
+   further debugging.
 
 ## 16. Important project files
 
 | File | Purpose |
 | --- | --- |
-| `Makefile` | Reproducible setup, build, and GDS entry points |
-| `prj.conf` | Zephyr threads, C++, USB CDC ACM, and device configuration |
-| `boards/rpi_pico2_rp2350a_m33.overlay` | Routes the chosen console to USB CDC ACM |
+| `Makefile` | Setup, build, flash (`cpfirm mac`/`wsl`), and GDS (`gds mac`/`wsl`) entry points |
+| `prj.conf` | Zephyr threads, heap, C++, USB CDC ACM, and device configuration |
+| `boards/rpi_pico2_rp2350a_m33.overlay` | Routes the chosen console to USB CDC ACM; subsystem power-enable GPIO pins; I2C0/I2C1 pin remap |
 | `CMakeLists.txt` | Loads Zephyr, F´, compatibility code, configuration, and deployment |
-| `config/rp2350-overrides/` | Embedded capacities for the complete subtopologies |
-| `FprimeBilleeRcm/Config/PlatformCfg.fpp` | Zephyr 4.3 OSAL object storage sizes |
+| `config/rp2350-overrides/CdhCoreConfig.fpp` | CDH queue depths/stacks — `$health` capped at 16, not 32 (Section 5.5) |
+| `config/rp2350-overrides/ComCcsdsConfig.fpp` | CCSDS queue depths/stacks/buffer sizes — `comQueue` capped at 16 (Section 5.5) |
+| `config/rp2350-overrides/DataProductsConfig.fpp`, `FileHandlingConfig.fpp` | Data-product and file-handling capacities |
+| `config/rp2350-overrides/DpCatalogCfg.hpp`, `PrmDbImplCfg.hpp`, `FpySequencerCfg.fpp` | Catalog, parameter, and sequencer capacities |
+| `FprimeBilleeRcm/Config/PlatformCfg.fpp` | Zephyr 4.3 OSAL object storage sizes (`FW_TASK_HANDLE_MAX_SIZE`) |
 | `FprimeBilleeRcm/Config/TlmChanImplCfg.hpp` | Telemetry database sizing |
+| `lib/fprime-billee` | Project component library (`Billee.SubsystemManager`), own `lucadev` branch |
 | `rp2350Deployment/Main.cpp` | Embedded entry point |
 | `rp2350Deployment/Top/instances.fpp` | Project instances, queues, stacks, and priorities |
 | `rp2350Deployment/Top/rp2350DeploymentTopology.cpp` | Zephyr device configuration and topology startup |
-| `uart_gds.sh` | Validated CCSDS-over-UART GDS launcher |
+| `uart_gds.sh` | CCSDS-over-UART GDS launcher (used by `make gds`) |
 | `west.yml` | Pinned Zephyr and required modules |
-| `settings.ini` | F´ framework and fprime-zephyr locations |
+| `settings.ini` | F´ framework and library locations |
 
 ## 17. Rebuild checklist after source changes
 
 ```bash
 git status --short
-make zephyr-rp2350
+make build-rp2350
 ```
 
 Then repeat:
@@ -979,12 +1274,12 @@ Then repeat:
 1. linker memory check;
 2. generated `.config` thread check;
 3. generated devicetree CDC check;
-4. generated 16-stack check;
+4. generated 17-stack check;
 5. UF2 family check;
-6. flash;
-7. Windows runtime VID/PID check;
-8. WSL attach;
-9. GDS event/telemetry and safe-command test.
+6. flash (`make cpfirm mac` / `wsl`, or manual BOOTSEL copy);
+7. macOS: confirm `/dev/cu.usbmodem*` re-enumerates — WSL2/Windows: confirm
+   the runtime VID/PID and reattach via `usbipd`;
+8. GDS event/telemetry and safe-command test (`make gds mac` / `wsl`).
 
 ## 18. References
 
@@ -1000,12 +1295,20 @@ Then repeat:
 
 ## 19. Known limitations
 
-- The firmware has been clean-built and its generated configuration inspected,
-  but this document cannot substitute for a test on the actual board.
-- The development VID/PID must be replaced before distributing a product.
+- Hardware-verified on macOS; the WSL2/Windows path has not been re-run
+  against the current source since macOS support was added, though nothing
+  in this deployment is macOS-specific — it should still work.
+- The development VID/PID (`2FE3:0004`) must be replaced before distributing
+  a product.
 - Current file APIs are present, but a durable on-board filesystem is not
   established by this setup.
-- Four-kilobyte active stacks are based on the upstream embedded configuration
-  and successful linking; production stack high-water marks should be measured.
-- Capacity values must be revisited as telemetry, parameters, data products,
-  sequence complexity, or traffic rates grow.
+- 8 KiB active-component stacks are the proven-working value for this
+  topology; production stack high-water marks should still be measured
+  rather than assumed.
+- I2C0/I2C1 are wired in the board overlay but deliberately left disabled
+  (`CONFIG_I2C=n`) to preserve heap headroom (Section 5.5) — no F´ component
+  uses them yet. Re-enable and re-verify heap margin once one does.
+- Capacity values (queue depths, buffer counts, telemetry buckets) must be
+  revisited as telemetry, parameters, data products, sequence complexity, or
+  active-component count grow — see Section 14's invariants and Section 5.5
+  for how to actually verify heap margin rather than estimate it.

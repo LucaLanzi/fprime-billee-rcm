@@ -8,7 +8,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds print-env check-env
+.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds cpfirm print-env check-env
 
 help: ## Show available commands
 	@echo "Available commands:"
@@ -37,8 +37,9 @@ build-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
 	@echo "make build-rp2350 complete"
 
 USBIPD_BUSID ?= 2-4
+MAC_UART_DEVICE ?= /dev/tty.usbmodem2101
 
-.PHONY: gds wsl
+.PHONY: gds wsl mac
 
 gds:
 	@if [ "$(filter wsl,$(MAKECMDGOALS))" = "wsl" ]; then \
@@ -49,11 +50,58 @@ gds:
 				exit 1; \
 			}; \
 	fi
-	./uart_gds.sh
+	@if [ "$(filter mac,$(MAKECMDGOALS))" = "mac" ]; then \
+		UART_DEVICE="$(MAC_UART_DEVICE)" ./uart_gds.sh; \
+	else \
+		./uart_gds.sh; \
+	fi
 
-# Dummy target used only as a command-line keyword
+# Dummy targets used only as command-line keywords
 wsl:
 	@:
+
+mac:
+	@:
+
+UF2_FILE := $(PROJECT_ROOT)/build-artifacts/zephyr.uf2
+
+MAC_BOOTSEL_VOLUME ?= /Volumes/RP2350
+LINUX_BOOTSEL_VOLUME ?= /media/$(shell whoami)/RP2350
+WSL_BOOTSEL_DRIVE ?= D:
+
+cpfirm: ## Copy build-artifacts/zephyr.uf2 to the board while it is in BOOTSEL mode
+	@test -f "$(UF2_FILE)" || { \
+		echo "[ERROR] $(UF2_FILE) not found. Run 'make build-rp2350' first."; \
+		exit 1; \
+	}
+	@if [ "$(filter mac,$(MAKECMDGOALS))" = "mac" ]; then \
+		test -d "$(MAC_BOOTSEL_VOLUME)" || { \
+			echo "[ERROR] $(MAC_BOOTSEL_VOLUME) not found. Is the board in BOOTSEL mode?"; \
+			exit 1; \
+		}; \
+		cp "$(UF2_FILE)" "$(MAC_BOOTSEL_VOLUME)/" && echo "[INFO] Copied to $(MAC_BOOTSEL_VOLUME)"; \
+	elif [ "$(filter wsl,$(MAKECMDGOALS))" = "wsl" ]; then \
+		echo "[INFO] Attaching USB device $(USBIPD_BUSID) to WSL..."; \
+		powershell.exe -NoProfile -Command \
+			"usbipd attach --wsl --busid $(USBIPD_BUSID)" || { \
+				echo "[ERROR] Failed to attach USB device $(USBIPD_BUSID)"; \
+				exit 1; \
+			}; \
+		echo "[INFO] Copying via Windows drive $(WSL_BOOTSEL_DRIVE) (adjust WSL_BOOTSEL_DRIVE if the board mounts elsewhere)..."; \
+		WIN_UF2_PATH="$$(wslpath -w "$(UF2_FILE)")"; \
+		powershell.exe -NoProfile -Command \
+			"Copy-Item -Path '$$WIN_UF2_PATH' -Destination '$(WSL_BOOTSEL_DRIVE)\\'" || { \
+				echo "[ERROR] Failed to copy to $(WSL_BOOTSEL_DRIVE). Is the board in BOOTSEL mode and mounted at that drive letter?"; \
+				exit 1; \
+			}; \
+		echo "[INFO] Copied to $(WSL_BOOTSEL_DRIVE)"; \
+	else \
+		test -d "$(LINUX_BOOTSEL_VOLUME)" || { \
+			echo "[ERROR] $(LINUX_BOOTSEL_VOLUME) not found. Is the board in BOOTSEL mode? Set LINUX_BOOTSEL_VOLUME if it mounts elsewhere."; \
+			exit 1; \
+		}; \
+		cp "$(UF2_FILE)" "$(LINUX_BOOTSEL_VOLUME)/" && echo "[INFO] Copied to $(LINUX_BOOTSEL_VOLUME)"; \
+	fi
 
 print-env: ## Print Make and shell environment values
 	@echo "Make PROJECT_ROOT=$(PROJECT_ROOT)"

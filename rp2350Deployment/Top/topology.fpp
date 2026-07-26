@@ -37,6 +37,15 @@ module rp2350Deployment {
   # BILLEE Component instances
   # ----------------------------------------------------------------------
     instance subsystemManager
+    instance drive1EnableGpio
+    instance drive2EnableGpio
+    instance drive3EnableGpio
+    instance drive4EnableGpio
+    instance drive5EnableGpio
+    instance drive6EnableGpio
+    instance armEnableGpio
+    instance scienceEnableGpio
+    instance auxEnableGpio
 
   # ----------------------------------------------------------------------
   # Pattern graph specifiers
@@ -135,7 +144,16 @@ module rp2350Deployment {
     }
 
     connections rp2350Deployment {
-
+      # Subsystem power-enable GPIO wiring
+      subsystemManager.Drive1Set -> drive1EnableGpio.gpioWrite
+      subsystemManager.Drive2Set -> drive2EnableGpio.gpioWrite
+      subsystemManager.Drive3Set -> drive3EnableGpio.gpioWrite
+      subsystemManager.Drive4Set -> drive4EnableGpio.gpioWrite
+      subsystemManager.Drive5Set -> drive5EnableGpio.gpioWrite
+      subsystemManager.Drive6Set -> drive6EnableGpio.gpioWrite
+      subsystemManager.ArmSet -> armEnableGpio.gpioWrite
+      subsystemManager.ScienceSet -> scienceEnableGpio.gpioWrite
+      subsystemManager.AuxSet -> auxEnableGpio.gpioWrite
     }
 
   }

@@ -4,14 +4,67 @@
  * uart0 on GPIO 0/1 and the board does not enumerate as a USB serial port.
  */
 
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350a-pinctrl.h>
+
 / {
     chosen {
         zephyr,console = &cdc_acm_uart0;
+    };
+
+    /*
+     * Native RP2350 power-enable outputs per the PDB GPIO map (Rev G):
+     * GPIO4-9 drivetrain, GPIO10 arm, GPIO11 science, GPIO12 aux. All
+     * active-high, all must come up inactive/low.
+     */
+    billee-gpio-outputs {
+        compatible = "gpio-leds";
+
+        drive_enable_1: drive-enable-1 { gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>; };
+        drive_enable_2: drive-enable-2 { gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>; };
+        drive_enable_3: drive-enable-3 { gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>; };
+        drive_enable_4: drive-enable-4 { gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>; };
+        drive_enable_5: drive-enable-5 { gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>; };
+        drive_enable_6: drive-enable-6 { gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>; };
+        arm_enable: arm-enable { gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>; };
+        science_enable: science-enable { gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>; };
+        aux_enable: aux-enable { gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>; };
     };
 };
 
 &zephyr_udc0 {
     cdc_acm_uart0: cdc_acm_uart0 {
         compatible = "zephyr,cdc-acm-uart";
+    };
+};
+
+/*
+ * uart0 defaults to GPIO0/1 (TX/RX), which conflicts with I2C0 below.
+ * The board console and F Prime GDS transport both run over the USB CDC
+ * ACM device above, so the hardware UART0 peripheral is unused.
+ */
+&uart0 {
+    status = "disabled";
+};
+
+/*
+ * Per the PDB GPIO map (Rev G): I2C0 (high-current telemetry bus, INA780x
+ * via TCA4307) on GPIO0/1, I2C1 (logic/temp telemetry bus, MCP9808 via
+ * TCA4307) on GPIO2/3. Both buses are enabled here at the devicetree level;
+ * no F Prime I2C driver/component is wired to them yet.
+ */
+&i2c0_default {
+    group1 {
+        pinmux = <I2C0_SDA_P0>, <I2C0_SCL_P1>;
+        input-enable;
+        input-schmitt-enable;
+    };
+};
+
+&i2c1_default {
+    group1 {
+        pinmux = <I2C1_SDA_P2>, <I2C1_SCL_P3>;
+        input-enable;
+        input-schmitt-enable;
     };
 };

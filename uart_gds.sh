@@ -18,14 +18,13 @@ fi
 
 if [[ ! -c "${UART_DEVICE}" ]]; then
     echo "Serial device ${UART_DEVICE} is not available." >&2
-    echo "On WSL2, attach the runtime USB CDC device with usbipd, then check 'ls -l /dev/ttyACM*'." >&2
+    echo "check 'ls -l /dev/ttyACM*'." >&2
     exit 1
 fi
 
 exec "${GDS_BIN}" \
   --no-app \
   --dictionary "${DICTIONARY_PATH}" \
-  --framing-selection space-packet-space-data-link \
   --communication-selection uart \
   --uart-device "${UART_DEVICE}" \
   --uart-skip-port-check \

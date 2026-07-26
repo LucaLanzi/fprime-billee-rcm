@@ -2,7 +2,12 @@ module ComCcsdsConfig {
     constant BASE_ID = 0x02000000
 
     module QueueSizes {
-        constant comQueue = 24
+        # Reduced from 24: this component's own async-port message queue was
+        # costing ~565 bytes/slot (~13.6 KiB total), the single largest per-component
+        # heap consumer at boot, and was the last ~1.2 KiB standing between a working
+        # boot and cmdSeq's 5 KiB command-sequence buffer allocation failing. 16
+        # matches the depth already used for events/health elsewhere in this topology.
+        constant comQueue = 16
         constant aggregator = 8
     }
 
