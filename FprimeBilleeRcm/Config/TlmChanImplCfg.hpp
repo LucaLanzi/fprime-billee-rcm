@@ -2,14 +2,18 @@
 #define TLMCHANIMPLCFG_HPP_
 
 // Size the telemetry database for this embedded deployment. The generated
-// dictionary currently contains 112 telemetry channels (89 baseline + 9 from
-// McpManager/ThermalStateMachine + 9 from InaManager's 9 INA780B sensors).
+// dictionary currently contains 119 telemetry channels.
 //
-// TLMCHAN_HASH_BUCKETS must be >= the channel count -- it's a fixed-size
-// static array (Svc::TlmChan::TlmEntry buckets[TLMCHAN_HASH_BUCKETS], doubled
-// by TlmChan's internal double-buffering), NOT heap, so it doesn't compete
-// with the runtime margin covered in README 14.4. But it is far from free:
-// each TlmEntry's Fw::TlmBuffer is sized by the project-wide
+// TLMCHAN_HASH_BUCKETS is a pool of hash-table nodes (Svc::TlmChan::TlmEntry
+// buckets[TLMCHAN_HASH_BUCKETS], doubled by TlmChan's internal double-
+// buffering) allocated lazily, one per DISTINCT channel ID the first time it
+// is ever written -- not one per channel that merely exists in the
+// dictionary. FW_ASSERT fires the moment a write needs a node and the pool
+// is already full, so this must stay >= the number of channels actually
+// written at runtime, which in practice means >= the total channel count.
+// It's a fixed-size static array, NOT heap, so it doesn't compete with the
+// runtime margin covered in the README's heap section. But it is far from
+// free: each TlmEntry's Fw::TlmBuffer is sized by the project-wide
 // FW_COM_BUFFER_MAX_SIZE (default 512, shared with command/event/param/file
 // buffers -- see lib/fprime/default/config/FpConstants.fpp), not by this
 // project's actual telemetry types (our largest, Billee::ThermalReading, is
@@ -22,7 +26,7 @@ namespace {
 enum {
     TLMCHAN_NUM_TLM_HASH_SLOTS = 15,
     TLMCHAN_HASH_MOD_VALUE = 99,
-    TLMCHAN_HASH_BUCKETS = 116
+    TLMCHAN_HASH_BUCKETS = 125
 };
 }
 

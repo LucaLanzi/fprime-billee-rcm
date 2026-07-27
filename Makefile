@@ -8,7 +8,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds cpfirm print-env check-env
+.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds cpfirm print-env check-env print-banner
 
 help: ## Show available commands
 	@echo "Available commands:"
@@ -19,6 +19,7 @@ setup: ## Create venv and install project dependencies
 	$(VENV_PYTHON) -m pip install -r requirements.txt
 	grep -q "FPRIME_FRAMEWORK_PATH" fprime-venv/bin/activate || echo 'export FPRIME_FRAMEWORK_PATH=$(PROJECT_ROOT)/lib/fprime' >> fprime-venv/bin/activate
 	@echo "make setup complete"
+	@$(MAKE) --no-print-directory print-banner
 
 setup-zephyr: ## Install Zephyr dependencies
 	$(VENV_PYTHON) -m pip install -r requirements-zephyr.txt
@@ -26,6 +27,20 @@ setup-zephyr: ## Install Zephyr dependencies
 	$(VENV_PYTHON) -m west packages pip --install
 	$(VENV_PYTHON) -m west sdk install --toolchains arm-zephyr-eabi
 	@echo "make zephyr-setup complete"
+	@$(MAKE) --no-print-directory print-banner
+
+print-banner: ## Print the project splash screen
+	@echo ""
+	@echo "██████╗  ██╗██╗     ██╗     ███████╗███████╗"
+	@echo "██╔══██╗ ██║██║     ██║     ██╔════╝██╔════╝"
+	@echo "██████╔╝ ██║██║     ██║     █████╗  █████╗  "
+	@echo "██╔══██╗ ██║██║     ██║     ██╔══╝  ██╔══╝  "
+	@echo "██████╔╝ ██║███████╗███████╗███████╗███████╗"
+	@echo "╚═════╝  ╚═╝╚══════╝╚══════╝╚══════╝╚══════╝"
+	@echo ""
+	@echo "        Rover Control Module"
+	@echo "        Powered by F\` Flight Software (NASA/JPL)"
+	@echo ""
 
 clean-zephyr: ## Remove Zephyr build outputs
 	rm -rf build-fprime-automatic-zephyr build-artifacts/zephyr
