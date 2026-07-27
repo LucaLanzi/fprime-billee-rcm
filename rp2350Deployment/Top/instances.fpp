@@ -65,6 +65,16 @@ module rp2350Deployment {
     stack size Default.STACK_SIZE \
     priority 38
 
+  # Queue size is larger than Default.QUEUE_SIZE: InaManager fires 9 powerReadingOut sends
+  # back-to-back within a single run_handler call, and McpManager fires 4 (3 sensors, with
+  # the shared arm/science sensor counted twice). Even with `drop` set on the receiving ports
+  # (see FPManager.fpp) as a hard backstop, size the queue to comfortably hold a full burst
+  # from both managers so readings aren't routinely dropped in normal operation.
+  instance fpManager: Billee.FPManager base id 0x10024000 \
+    queue size 16 \
+    stack size Default.STACK_SIZE \
+    priority 37
+
   # ----------------------------------------------------------------------
   # Queued component instances
   # ----------------------------------------------------------------------
@@ -119,12 +129,5 @@ module rp2350Deployment {
   # ----------------------------------------------------------------------
 
   instance inaI2cBusDriver: Zephyr.ZephyrI2cDriver base id 0x10023000
-
-  # ----------------------------------------------------------------------
-  # Fault Protection Manager instance (passive: reacts to readings pushed
-  # in by mcpManager/inaManager rather than its own rate-group tick)
-  # ----------------------------------------------------------------------
-
-  instance fpManager: Billee.FPManager base id 0x10024000
 
 }
