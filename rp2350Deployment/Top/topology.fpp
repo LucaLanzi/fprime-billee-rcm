@@ -47,6 +47,8 @@ module rp2350Deployment {
     instance scienceEnableGpio
     instance auxEnableGpio
     instance eStopStatusGpio
+    instance mcpManager
+    instance mcpI2cBusDriver
 
   # ----------------------------------------------------------------------
   # Pattern graph specifiers
@@ -128,6 +130,7 @@ module rp2350Deployment {
       # Rate group 2
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup2] -> rateGroup2.CycleIn
       rateGroup2.RateGroupMemberOut[0] -> cmdSeq.schedIn
+      rateGroup2.RateGroupMemberOut[1] -> mcpManager.run
 
       # Rate group 3
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup3] -> rateGroup3.CycleIn
@@ -158,6 +161,9 @@ module rp2350Deployment {
 
       # E-STOP status input
       subsystemManager.EStopRead -> eStopStatusGpio.gpioRead
+
+      # MCP9808 temperature sensors (I2C1)
+      mcpManager.mcpWriteRead -> mcpI2cBusDriver.writeRead
     }
 
   }

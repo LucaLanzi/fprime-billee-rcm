@@ -55,6 +55,11 @@ module rp2350Deployment {
     stack size Default.STACK_SIZE \
     priority 44
 
+  instance mcpManager: Billee.McpManager base id 0x10020000 \
+    queue size Default.QUEUE_SIZE \
+    stack size Default.STACK_SIZE \
+    priority 39
+
   # ----------------------------------------------------------------------
   # Queued component instances
   # ----------------------------------------------------------------------
@@ -97,5 +102,11 @@ module rp2350Deployment {
   instance auxEnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001E000
 
   instance eStopStatusGpio: Zephyr.ZephyrGpioDriver base id 0x1001F000
+
+  # ----------------------------------------------------------------------
+  # MCP9808 temperature sensor I2C driver instance
+  # ----------------------------------------------------------------------
+
+  instance mcpI2cBusDriver: Zephyr.ZephyrI2cDriver base id 0x10021000
 
 }

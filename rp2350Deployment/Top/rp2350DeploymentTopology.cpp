@@ -120,6 +120,9 @@ void configureTopology() {
 
     // Bring up the E-STOP status input.
     configureGpioInput(eStopStatusGpio, eStopStatusPin);
+
+    // MCP9808 temperature sensors (I2C1, GPIO2/3).
+    mcpI2cBusDriver.open(DEVICE_DT_GET(DT_NODELABEL(i2c1)));
 }
 
 void setupTopology(const TopologyState& state) {

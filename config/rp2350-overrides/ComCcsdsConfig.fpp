@@ -22,8 +22,17 @@ module ComCcsdsConfig {
     }
 
     module QueueDepths {
-        constant events = 16
-        constant tlm = 32
+        # This is ComCcsds.comQueue's INTERNAL priority-queue depth (allocated inside
+        # comQueue.configure(), separate from QueueSizes.comQueue above, which is that
+        # same active component's own async-port message queue). Measured directly with
+        # a heap probe: at the original values (events=16, tlm=32, file=4) this single
+        # call consumed 26 KiB of heap -- by far the largest individual allocation in
+        # the whole boot sequence, and the reason cmdSeq's later 5 KiB sequence-buffer
+        # allocation had nothing left to work with. Halving once (events=8, tlm=16) only
+        # left cmdSeq's allocation succeeding by ~300 bytes -- too marginal to survive
+        # steady-state runtime allocations. Halved again for real headroom.
+        constant events = 4
+        constant tlm = 8
         constant file = 4
     }
 

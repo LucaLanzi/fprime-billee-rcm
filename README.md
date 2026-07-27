@@ -413,6 +413,26 @@ technique that actually found this — a binary-search `malloc()` probe
 between successive initialization steps, comparing against a reliable serial
 capture (see 5.7) — is far more direct than guessing at capacity numbers.
 
+**This happened a second time**, when `Billee::McpManager` (an I2C temperature
+manager) was added as a new active component. The new component itself was
+not the problem — bisecting it out of the topology entirely, and even
+reverting every other file to the exact last-committed, previously-verified
+build, still reproduced the identical silent hang, which ruled out both the
+new component and a hardware/environment explanation. The heap probe (this
+time instrumenting `configComponents()` step by step rather than just
+`initComponents()`) found a second, previously invisible consumer:
+`ComCcsds::comQueue.configure()` — called from `configComponents()`, not
+`initComponents()` — allocates its own internal priority-queue storage sized
+by `ComCcsdsConfig::QueueDepths` (`events`, `tlm`, `file`). At the stock
+values (16/32/4) this single call cost **26 KiB**, more than any other single
+allocation in the whole boot sequence, including every active component's
+message queue combined. This is a completely different setting from
+`ComCcsdsConfig::QueueSizes::comQueue` (that component's own async-port
+message queue, already reduced once in the paragraphs above) — same
+component, two unrelated heap costs, easy to fix one and not know the other
+exists. See Section 14.4 for the general methodology this incident fed back
+into.
+
 ### 5.6 F Prime 4.2.2 / fprime-zephyr / Zephyr 4.3 compatibility layer
 
 F´ `v4.2.2` and this revision of `fprime-zephyr` come from different points
@@ -1044,14 +1064,156 @@ limit.
 
 ### 14.4 Runtime heap
 
-The Zephyr linker summary does not include all allocations made after boot.
-Queue depths, communication buffer counts, sequence buffers, parameter
-entries, and data-product catalog slots consume runtime heap.
+This project has hit the same class of bug twice (Section 5.5) — once during
+initial bring-up, once when adding a single new component. Both times the
+build linked cleanly, flashed, and *looked* fine by every static measure; the
+failure only showed up on real hardware, partway through boot, as a silent
+hang or an `FW_ASSERT` on a null pointer. This section exists so a third
+occurrence — inevitable, given more components are coming — costs an hour of
+measurement instead of another multi-hour debugging session.
 
-Keep significant static headroom and test on hardware after changing:
+#### 14.4.1 The one fact that causes this every time
+
+**The RAM percentage in the linker/build summary (Section 6, and every
+`make build-rp2350` run) is static usage only — `.data` + `.bss` + the
+`CONFIG_DYNAMIC_THREAD_POOL_SIZE` stack pool.** It does not include a single
+byte of what components allocate from the heap at runtime. Zephyr's
+`CONFIG_COMMON_LIBC_MALLOC_ARENA_SIZE=-1` gives the heap *whatever's left*
+from the linker's `_end` symbol to the top of SRAM — a number that isn't
+printed anywhere in normal build output. A build can report 75% RAM used and
+still run out of heap five different times before it finishes booting. Never
+infer heap headroom from the static RAM percentage; the two are unrelated
+past this shared starting pool.
+
+#### 14.4.2 Every place heap gets spent at boot, in order
+
+| Phase (see `setupTopology()`) | What allocates | Formula |
+|---|---|---|
+| `initComponents()` | Every active/queued component's own async-port message queue | `queue size × largest async message size for that component` |
+| `configComponents()` | `Svc::ComQueue.configure()` (e.g. `ComCcsds::comQueue`) | its own internal priority-queue storage, sized by that subtopology's `QueueDepths` (`events`/`tlm`/`file`) — **separate from, and easy to confuse with, that same component's `QueueSizes` entry** |
+| `configComponents()` | Every `Svc::BufferManager::setup()` (e.g. `commsBufferManager`, `dpBufferManager`) | `Σ(bufferSize × numBuffers)` per bin, plus a small per-buffer struct overhead |
+| `configComponents()` | `Svc::DpCatalog::configure()`, `Svc::DpWriter::configure()`, `Svc::FileDownlink::configure()` | proportional to `DP_MAX_DIRECTORIES` / `DP_MAX_FILES` (`config/rp2350-overrides/DpCatalogCfg.hpp`) and queue depths |
+| `configureTopology()` (project code) | Any explicit `allocateBuffer()` call | e.g. `cmdSeq.allocateBuffer(0, mallocator, 5 * 1024)` — a flat 5 KiB, unconditionally |
+
+Two consequences that aren't obvious from the table:
+
+- **The `ComCcsds::comQueue` gotcha is real and will recur.** Every
+  `Svc::ComQueue`-based subtopology has this same two-config split
+  (`QueueSizes` = the component's own thread queue, `QueueDepths` = the
+  internal storage its `.configure()` call allocates). If you tune one and
+  not the other, you've likely fixed a small cost and missed a large one.
+- **Order matters for diagnosis, not for the fix.** A failure late in this
+  table (e.g. `cmdSeq`'s 5 KiB) is very often *caused* by something earlier
+  (e.g. `comQueue.configure()`'s 26 KiB) leaving nothing left — the assert
+  message names the symptom, not the culprit. Don't tune the component whose
+  name is in the assert; measure backward through the table until the heap
+  drop turns up.
+
+#### 14.4.3 Checklist: adding a new active component
+
+1. Add its `instance` (queue size, stack size — must equal
+   `CONFIG_DYNAMIC_THREAD_STACK_SIZE`, currently 8192 — and priority) to
+   `instances.fpp`, and add it to the `topology { instance ... }` block and
+   any connections in `topology.fpp`.
+2. Increment `CONFIG_DYNAMIC_THREAD_POOL_SIZE` in `prj.conf` by exactly 1 per
+   new active/queued component (Section 14.1). Forgetting this, or leaving it
+   too high after *removing* a component, both cost real RAM/heap for no
+   reason — keep it exactly matched to the generated active-stack count.
+3. If it needs a peripheral (I2C/SPI/etc.), enable the Kconfig
+   (`CONFIG_I2C=y`, etc.) — but note this alone is rarely the cause of a heap
+   failure; the peripheral driver itself is cheap. Don't spend time here
+   first.
+4. Rebuild (`make build-rp2350`), flash, and **measure, don't assume**: run
+   the heap probe below through a full boot on real hardware. A clean-looking
+   build log or a boot that produces some plausible telemetry is not
+   sufficient — this project's last two failures both produced partial,
+   plausible-looking output before hanging.
+5. If margin at any checkpoint is under a few KiB, don't guess which config
+   to trim — bisect with the probe (14.4.4) until the actual consumer is
+   identified, the same way both past incidents were solved.
+6. Verify with an **extended** live test (a minute or more of continuous
+   telemetry/events over GDS or a raw serial capture), not just a clean boot
+   log. Both past incidents' crashes happened after boot looked complete, and
+   McpManager's own failure mode (a read that fails cleanly and logs an
+   event) only reveals itself once the component's rate group has ticked a
+   few times.
+
+#### 14.4.4 The heap probe
+
+This is the exact technique that found both incidents. It measures the
+largest single block currently allocatable — a direct, on-hardware answer to
+"how much heap is actually left *right now*," which nothing in the static
+build output can tell you.
+
+```cpp
+#include <zephyr/sys/printk.h>
+#include <cstdlib>
+
+void heapProbe(const char* label) {
+    size_t lo = 0, hi = 256 * 1024, best = 0;
+    while (lo <= hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        void* p = std::malloc(mid);
+        if (p != nullptr) {
+            std::free(p);
+            best = mid;
+            lo = mid + 1;
+        } else {
+            if (mid == 0) break;
+            hi = mid - 1;
+        }
+    }
+    printk("HEAPPROBE[%s]: largest allocatable block = %u bytes\n", label, (unsigned)best);
+}
+```
+
+How to use it:
+
+1. Add the function above to `rp2350Deployment/Top/rp2350DeploymentTopology.cpp`
+   (a project-owned file, safe to edit directly), and call
+   `heapProbe("some label")` between each phase of `setupTopology()`
+   (`initComponents`, `setBaseIds`, `connectComponents`, `regCommands`,
+   `configComponents`, `configureTopology`, `loadParameters`, `startTasks`).
+2. For finer resolution *inside* `configComponents()` or `regCommands()`
+   (autocoded, in `build-fprime-automatic-zephyr/rp2350Deployment/Top/
+   rp2350DeploymentTopologyAc.cpp`), forward-declare `void heapProbe(const
+   char*);` at the top of that generated file and add calls between each
+   component's `.configure()`/`.setup()`/`.regCommands()` line. This file is
+   regenerated by `fprime-util generate`, so after editing it **build
+   incrementally** — `fprime-venv/bin/fprime-util build zephyr` (not the full
+   `make build-rp2350`, which force-regenerates and discards the hand-edit).
+3. Flash and capture serial output (Section 5.7's DTR-based capture, or GDS
+   with `--log-directly`). Read the `HEAPPROBE[...]` lines in order: the
+   phase where the number drops sharply, or hits single-to-low-triple digits,
+   is where to look for the actual consumer — not wherever the eventual
+   assert happens to fire.
+4. **Remove all probe calls and the forward declaration before committing.**
+   They're diagnostic-only; leaving them in production code adds printk
+   traffic on the same UART as the CCSDS binary stream (Section 5.7) and will
+   corrupt telemetry.
+
+#### 14.4.5 Current tuned values (reference)
+
+These are the constants that have already needed adjustment, and where they
+live. Check all of them — not just the newest one — whenever heap margin gets
+tight again:
+
+| Setting | Location | Current value |
+|---|---|---|
+| `CdhCoreConfig.QueueSizes.$health` | `config/rp2350-overrides/CdhCoreConfig.fpp` | 16 (was 32) |
+| `CdhCoreConfig.QueueSizes.tlmSend` | `config/rp2350-overrides/CdhCoreConfig.fpp` | 16 (was 32) |
+| `ComCcsdsConfig.QueueSizes.comQueue` | `config/rp2350-overrides/ComCcsdsConfig.fpp` | 16 (was 24) |
+| `ComCcsdsConfig.QueueDepths.{events,tlm,file}` | `config/rp2350-overrides/ComCcsdsConfig.fpp` | 4 / 8 / 4 (was 16 / 32 / 4) |
+| `CONFIG_DYNAMIC_THREAD_POOL_SIZE` | `prj.conf` | 18 (one per active component) |
+| `CONFIG_DYNAMIC_THREAD_STACK_SIZE` | `prj.conf` | 8192 (must match every active-component stack size) |
+| `cmdSeq` sequence buffer | `rp2350Deployment/Top/rp2350DeploymentTopology.cpp` (`configureTopology()`) | 5 KiB, flat |
+
+Keep significant static headroom and re-measure on hardware (don't just
+rebuild and assume) after changing any of:
 
 - active task count or stack size;
-- component queue depths;
+- component queue depths — both `QueueSizes` (the component's own thread
+  queue) and any `QueueDepths`-style internal config on a `Svc::ComQueue`;
 - event, telemetry, or file packet depths;
 - communication or data-product buffer counts/sizes;
 - sequence limits;
@@ -1204,10 +1366,11 @@ This usually indicates stack or heap pressure:
 5. test with a serial log before GDS takes ownership of the port.
 
 Do not solve this by removing arbitrary subtopologies unless the mission design
-actually does not need them. Section 5.5 covers how this specific failure
-mode (heap exhaustion from per-component queue depths) was diagnosed and
-fixed on this project — a runtime `malloc()` heap probe pinpointed it far
-faster than guessing at capacity numbers.
+actually does not need them. Section 5.5 covers how this failure mode (heap
+exhaustion from per-component queue depths, and it has happened twice) was
+diagnosed and fixed on this project; Section 14.4 is the general methodology
+and reusable heap-probe technique to reach for before adding the next
+component.
 
 ### 15.10 macOS: GDS connects but shows no traffic
 
