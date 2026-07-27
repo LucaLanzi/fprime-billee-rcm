@@ -60,6 +60,11 @@ module rp2350Deployment {
     stack size Default.STACK_SIZE \
     priority 39
 
+  instance inaManager: Billee.InaManager base id 0x10022000 \
+    queue size Default.QUEUE_SIZE \
+    stack size Default.STACK_SIZE \
+    priority 38
+
   # ----------------------------------------------------------------------
   # Queued component instances
   # ----------------------------------------------------------------------
@@ -108,5 +113,11 @@ module rp2350Deployment {
   # ----------------------------------------------------------------------
 
   instance mcpI2cBusDriver: Zephyr.ZephyrI2cDriver base id 0x10021000
+
+  # ----------------------------------------------------------------------
+  # INA780B power monitor I2C driver instance
+  # ----------------------------------------------------------------------
+
+  instance inaI2cBusDriver: Zephyr.ZephyrI2cDriver base id 0x10023000
 
 }

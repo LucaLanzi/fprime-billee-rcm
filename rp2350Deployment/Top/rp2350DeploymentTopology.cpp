@@ -123,6 +123,9 @@ void configureTopology() {
 
     // MCP9808 temperature sensors (I2C1, GPIO2/3).
     mcpI2cBusDriver.open(DEVICE_DT_GET(DT_NODELABEL(i2c1)));
+
+    // INA780B power monitors (I2C0, GPIO0/1).
+    inaI2cBusDriver.open(DEVICE_DT_GET(DT_NODELABEL(i2c0)));
 }
 
 void setupTopology(const TopologyState& state) {

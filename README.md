@@ -1192,7 +1192,58 @@ How to use it:
    traffic on the same UART as the CCSDS binary stream (Section 5.7) and will
    corrupt telemetry.
 
-#### 14.4.5 Current tuned values (reference)
+#### 14.4.5 The bigger fix: `FW_COM_BUFFER_MAX_SIZE`
+
+Everything in 14.4.1–14.4.4 is about *runtime heap*. There's a second,
+larger cost that's static RAM, not heap, and it's worth understanding before
+tuning queue depths any further: `Svc::TlmChan` allocates one `TlmEntry` per
+telemetry hash bucket (`TLMCHAN_HASH_BUCKETS`, doubled by its own internal
+double-buffering), and each `TlmEntry` embeds an `Fw::TlmBuffer` sized by the
+framework-wide `FW_COM_BUFFER_MAX_SIZE` (default **512** — also the basis for
+every command, event, param, and file buffer, via
+`lib/fprime/default/config/FpConstants.fpp`). Adding `Billee::InaManager`
+(9 more telemetry channels) needed `TLMCHAN_HASH_BUCKETS` raised again, and
+that exposed just how expensive this really is: raising it by 20 buckets
+cost **38 KiB** — not the few hundred bytes a naive per-channel estimate
+would suggest, because every bucket carries a ~512-byte buffer regardless of
+how small this project's actual telemetry (40–90 bytes, worst case) is. At
+112 channels, the hash table alone was consuming **~120 KiB** — over a
+fifth of total SRAM — for a buffer 5–10x larger than anything ever placed in
+it. That's what actually exhausted heap this time, not any one queue depth.
+
+The fix: `FprimeBilleeRcm/Config/FpConstants.fpp` overrides
+`FW_COM_BUFFER_MAX_SIZE` down to **160** (project-level override, no changes
+to `/lib`). This shrunk static RAM usage from 453,616 B (85.19%) to
+**362,648 B (68.11%)** in one change — recovering more headroom than every
+queue-depth fix in this document combined. Two things had to move with it:
+
+- **`FW_FILE_CHUNK_SIZE`** (`FprimeBilleeRcm/Config/PlatformCfg.fpp`) was
+  reduced from 512 to 128 in step, since `FW_FILE_BUFFER_MAX_SIZE` equals
+  `FW_COM_BUFFER_MAX_SIZE` *exactly* (no subtraction) — file downlink chunks
+  must still fit whole inside it. This means smaller, more numerous chunks
+  per file transfer (slower, not broken) — acceptable here since this
+  project's data-product files are small.
+- **`FW_LOG_STRING_MAX_SIZE`** (same `FpConstants.fpp` override) was reduced
+  from 200 to 100 — a `static_assert` in `Fw/FPrimeBasicTypes.hpp` catches
+  this at compile time if the two get out of sync (`FW_LOG_STRING_MAX_SIZE`
+  must stay below `FW_LOG_BUFFER_MAX_SIZE`, which derives from
+  `FW_COM_BUFFER_MAX_SIZE`). This only truncates source file paths in
+  `FW_ASSERT` failure reports, not normal event data.
+
+**If overriding a framework-defined FPP constant like this, the override
+file's name must match whichever framework file originally declared it** —
+`FW_COM_BUFFER_MAX_SIZE` lives in the framework's `FpConstants.fpp`, so the
+project override has to be a same-named `FpConstants.fpp`, even though
+`FW_FILE_CHUNK_SIZE` (defined in the framework's `PlatformCfg.fpp`) is
+already overridden in this project's own `PlatformCfg.fpp`. F´'s
+config-override locator maps by that filename, not by constant name — the
+error if this is wrong (`inconsistent location path`) doesn't spell out the
+fix directly. Also, the override completely **replaces** the named file
+rather than patching it: the override file must contain a full copy of every
+constant the framework's original file declares, not just the ones being
+changed, or later constants use an undefined symbol.
+
+#### 14.4.6 Current tuned values (reference)
 
 These are the constants that have already needed adjustment, and where they
 live. Check all of them — not just the newest one — whenever heap margin gets
@@ -1200,11 +1251,15 @@ tight again:
 
 | Setting | Location | Current value |
 |---|---|---|
+| `FW_COM_BUFFER_MAX_SIZE` | `FprimeBilleeRcm/Config/FpConstants.fpp` | 160 (framework default 512) |
+| `FW_FILE_CHUNK_SIZE` | `FprimeBilleeRcm/Config/PlatformCfg.fpp` | 128 (framework default 512) |
+| `FW_LOG_STRING_MAX_SIZE` | `FprimeBilleeRcm/Config/FpConstants.fpp` | 100 (framework default 200) |
+| `TLMCHAN_HASH_BUCKETS` | `FprimeBilleeRcm/Config/TlmChanImplCfg.hpp` | 116 (must be ≥ generated channel count; currently 112) |
 | `CdhCoreConfig.QueueSizes.$health` | `config/rp2350-overrides/CdhCoreConfig.fpp` | 16 (was 32) |
 | `CdhCoreConfig.QueueSizes.tlmSend` | `config/rp2350-overrides/CdhCoreConfig.fpp` | 16 (was 32) |
 | `ComCcsdsConfig.QueueSizes.comQueue` | `config/rp2350-overrides/ComCcsdsConfig.fpp` | 16 (was 24) |
 | `ComCcsdsConfig.QueueDepths.{events,tlm,file}` | `config/rp2350-overrides/ComCcsdsConfig.fpp` | 4 / 8 / 4 (was 16 / 32 / 4) |
-| `CONFIG_DYNAMIC_THREAD_POOL_SIZE` | `prj.conf` | 18 (one per active component) |
+| `CONFIG_DYNAMIC_THREAD_POOL_SIZE` | `prj.conf` | 19 (one per active component) |
 | `CONFIG_DYNAMIC_THREAD_STACK_SIZE` | `prj.conf` | 8192 (must match every active-component stack size) |
 | `cmdSeq` sequence buffer | `rp2350Deployment/Top/rp2350DeploymentTopology.cpp` (`configureTopology()`) | 5 KiB, flat |
 
@@ -1214,7 +1269,10 @@ rebuild and assume) after changing any of:
 - active task count or stack size;
 - component queue depths — both `QueueSizes` (the component's own thread
   queue) and any `QueueDepths`-style internal config on a `Svc::ComQueue`;
-- event, telemetry, or file packet depths;
+- event, telemetry, or file packet depths — remember these all share
+  `FW_COM_BUFFER_MAX_SIZE`'s buffer sizing, so a single unusually large new
+  telemetry/event/command type raises the cost of every bucket, not just its
+  own;
 - communication or data-product buffer counts/sizes;
 - sequence limits;
 - parameter entries;
