@@ -120,4 +120,11 @@ module rp2350Deployment {
 
   instance inaI2cBusDriver: Zephyr.ZephyrI2cDriver base id 0x10023000
 
+  # ----------------------------------------------------------------------
+  # Fault Protection Manager instance (passive: reacts to readings pushed
+  # in by mcpManager/inaManager rather than its own rate-group tick)
+  # ----------------------------------------------------------------------
+
+  instance fpManager: Billee.FPManager base id 0x10024000
+
 }

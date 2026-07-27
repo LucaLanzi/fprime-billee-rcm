@@ -51,6 +51,7 @@ module rp2350Deployment {
     instance mcpI2cBusDriver
     instance inaManager
     instance inaI2cBusDriver
+    instance fpManager
 
   # ----------------------------------------------------------------------
   # Pattern graph specifiers
@@ -170,6 +171,15 @@ module rp2350Deployment {
 
       # INA780B power monitors (I2C0)
       inaManager.busWriteRead -> inaI2cBusDriver.writeRead
+    }
+
+    connections FPManager {
+      # Sensor readings feeding fault protection
+      inaManager.powerReadingOut -> fpManager.powerReadingIn
+      mcpManager.thermalReadingOut -> fpManager.thermalReadingIn
+
+      # Emergency subsystem shutdown, bypassing the normal ground-command path
+      fpManager.emergencyPowerOffOut -> subsystemManager.emergencyPowerOff
     }
 
   }
