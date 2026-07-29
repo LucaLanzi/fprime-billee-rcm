@@ -16,6 +16,7 @@ help: ## Show available commands
 
 setup: ## Create venv and install project dependencies
 	$(PYTHON) -m venv fprime-venv
+	git submodule update --init --recursive
 	$(VENV_PYTHON) -m pip install -r requirements.txt
 	grep -q "FPRIME_FRAMEWORK_PATH" fprime-venv/bin/activate || echo 'export FPRIME_FRAMEWORK_PATH=$(PROJECT_ROOT)/lib/fprime' >> fprime-venv/bin/activate
 	@echo "make setup complete"
