@@ -47,8 +47,8 @@ if [[ ! -c "${UART_DEVICE}" ]]; then
 fi
 
 exec "${GDS_BIN}" \
-  --comm-adapter uart
   --dictionary "${DICTIONARY_PATH}" \
+  --communication-selection uart \
   --uart-device "${UART_DEVICE}" \
   --uart-baud 115200 \
   --gui-addr 0.0.0.0 \
