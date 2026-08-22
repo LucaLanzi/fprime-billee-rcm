@@ -8,7 +8,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds cpfirm check-env print-banner
+.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds cpfirm print-banner
 
 help: ## Show available commands
 	@echo "Available commands:"
@@ -118,8 +118,3 @@ cpfirm: ## Copy build-artifacts/zephyr.uf2 to the board while it is in BOOTSEL m
 		}; \
 		cp "$(UF2_FILE)" "$(LINUX_BOOTSEL_VOLUME)/" && echo "[INFO] Copied to $(LINUX_BOOTSEL_VOLUME)"; \
 	fi
-
-check-env: ## Validate FPRIME_FRAMEWORK_PATH
-	@test -d "$$FPRIME_FRAMEWORK_PATH" || (echo "Invalid FPRIME_FRAMEWORK_PATH: $$FPRIME_FRAMEWORK_PATH" && exit 1)
-	@test -f "$$FPRIME_FRAMEWORK_PATH/cmake/FPrime.cmake" || (echo "Does not look like F Prime: $$FPRIME_FRAMEWORK_PATH" && exit 1)
-	@echo "FPRIME_FRAMEWORK_PATH is valid: $$FPRIME_FRAMEWORK_PATH"

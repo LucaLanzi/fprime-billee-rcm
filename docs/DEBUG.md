@@ -8,7 +8,7 @@ that looks completely normal. Every real bug found on this project so far
 invisible until it was directly instrumented and captured on real hardware.
 This document is the toolkit for doing that quickly instead of guessing.
 
-For the specific, recurring heap-exhaustion failure mode, see README.md
+For the specific, recurring heap-exhaustion failure mode, see ../README.md
 Section 14.4 — this document covers the general workflow; that section
 covers the heap-specific checklist and probe technique in detail.
 

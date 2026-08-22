@@ -114,8 +114,6 @@ module rp2350Deployment {
 
   instance scienceEnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001D000
 
-  instance auxEnableGpio: Zephyr.ZephyrGpioDriver base id 0x1001E000
-
   instance eStopStatusGpio: Zephyr.ZephyrGpioDriver base id 0x1001F000
 
   # ----------------------------------------------------------------------
