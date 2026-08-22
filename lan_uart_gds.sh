@@ -47,12 +47,10 @@ if [[ ! -c "${UART_DEVICE}" ]]; then
 fi
 
 exec "${GDS_BIN}" \
-  --no-app \
+  --comm-adapter uart
+  --dictionary "${DICTIONARY_PATH}" \
+  --uart-device "${UART_DEVICE}" \
+  --uart-baud 115200 \
   --gui-addr 0.0.0.0 \
   --gui-port "${GDS_FLASK_PORT}" \
-  --dictionary "${DICTIONARY_PATH}" \
-  --communication-selection uart \
-  --uart-device "${UART_DEVICE}" \
-  --uart-skip-port-check \
-  --uart-baud 115200 \
   "$@"
