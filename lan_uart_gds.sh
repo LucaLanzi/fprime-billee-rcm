@@ -47,6 +47,7 @@ if [[ ! -c "${UART_DEVICE}" ]]; then
 fi
 
 exec "${GDS_BIN}" \
+    --no-app \
   --dictionary "${DICTIONARY_PATH}" \
   --communication-selection uart \
   --uart-device "${UART_DEVICE}" \
