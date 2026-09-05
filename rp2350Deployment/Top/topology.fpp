@@ -45,7 +45,6 @@ module rp2350Deployment {
     instance drive6EnableGpio
     instance armEnableGpio
     instance scienceEnableGpio
-    instance auxEnableGpio
     instance eStopStatusGpio
     instance mcpManager
     instance mcpI2cBusDriver
@@ -161,7 +160,6 @@ module rp2350Deployment {
       subsystemManager.Drive6Set -> drive6EnableGpio.gpioWrite
       subsystemManager.ArmSet -> armEnableGpio.gpioWrite
       subsystemManager.ScienceSet -> scienceEnableGpio.gpioWrite
-      subsystemManager.AuxSet -> auxEnableGpio.gpioWrite
 
       # E-STOP status input
       subsystemManager.EStopRead -> eStopStatusGpio.gpioRead

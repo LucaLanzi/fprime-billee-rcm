@@ -31,7 +31,6 @@ static const gpio_dt_spec driveEnable5Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_
 static const gpio_dt_spec driveEnable6Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_enable_6), gpios);
 static const gpio_dt_spec armEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(arm_enable), gpios);
 static const gpio_dt_spec scienceEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(science_enable), gpios);
-static const gpio_dt_spec auxEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(aux_enable), gpios);
 
 // E-STOP status input (active-low: pulled LOW = on, HIGH = off).
 static const gpio_dt_spec eStopStatusPin = GPIO_DT_SPEC_GET(DT_NODELABEL(estop_status), gpios);
@@ -116,7 +115,6 @@ void configureTopology() {
     configureGpioOutput(drive6EnableGpio, driveEnable6Pin);
     configureGpioOutput(armEnableGpio, armEnablePin);
     configureGpioOutput(scienceEnableGpio, scienceEnablePin);
-    configureGpioOutput(auxEnableGpio, auxEnablePin);
 
     // Bring up the E-STOP status input.
     configureGpioInput(eStopStatusGpio, eStopStatusPin);

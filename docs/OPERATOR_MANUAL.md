@@ -2,7 +2,7 @@
 
 This is a quick-reference guide for operating the rover through the F´ Ground
 Data System (GDS) web UI. It assumes the board is already flashed and
-connected — see `README.md` for build/flash/connect instructions. If you just
+connected — see `../README.md` for build/flash/connect instructions. If you just
 need to get GDS running, jump to [Connecting](#connecting) below; otherwise
 skip to [Sending a Command](#sending-a-command) or the component references.
 
@@ -22,7 +22,7 @@ skip to [Sending a Command](#sending-a-command) or the component references.
 3. Click the **Commanding** tab in the left-hand nav to send commands; use
    **Channels** for telemetry and **Events** for the event log.
 
-If the page loads but nothing updates, see README.md's Troubleshooting
+If the page loads but nothing updates, see ../README.md's Troubleshooting
 section — the most common causes are a stale serial device path or a zombie
 `fprime-gds` process holding the port.
 
@@ -53,10 +53,9 @@ Full source: `lib/fprime-billee/Components/SubsystemManager/SubsystemManager.fpp
 |---|---|---|---|
 | `subsystemManager.SET_DRIVETRAIN_POWER_STATE` | 0 | `driveState: Fw.On` (`ON`/`OFF`) | Drives all six drivetrain motor enable pins together, as one unit. |
 | `subsystemManager.SET_ARM_POWER_STATE` | 1 | `armState: Fw.On` (`ON`/`OFF`) | Drives the arm subsystem enable pin. |
-| `subsystemManager.SET_AUX_POWER_STATE` | 2 | `auxState: Fw.On` (`ON`/`OFF`) | Drives the auxiliary subsystem enable pin. |
 | `subsystemManager.SET_SCIENCE_POWER_STATE` | 3 | `scienceState: Fw.On` (`ON`/`OFF`) | Drives the science subsystem enable pin. |
 
-All four enable pins are active-high: `ON` drives the pin high, `OFF` drives
+All three enable pins are active-high: `ON` drives the pin high, `OFF` drives
 it low. All six drivetrain pins are only ever set together — there is no
 per-motor command. There is no command for the logic/flight-computer board —
 it can't be power-cycled by anything running on it.
@@ -82,7 +81,6 @@ in the Channels tab before sending a power-on command.
 | `DrivetrainPowerState` | Current commanded state of the drivetrain enables (`ON`/`OFF`). |
 | `ArmPowerState` | Current commanded state of the arm enable. |
 | `SciencePowerState` | Current commanded state of the science enable. |
-| `AuxPowerState` | Current commanded state of the auxiliary enable. |
 | `E_STOP_Status` | Live read of the E-STOP input: `ON` = engaged, `OFF` = released/normal. Updated every rate-group cycle regardless of commands. |
 
 ### Events
@@ -98,7 +96,7 @@ continuously while E-STOP stays in one state. Use `E_STOP_Status` telemetry
 to check the *current* state at any given moment; use the events to know
 *when* it last changed. If you attach GDS after a transition already
 happened, you'll only see it in telemetry, not in the event log — see
-README.md's host-tooling notes on catching boot/transition-time events live.
+../README.md's host-tooling notes on catching boot/transition-time events live.
 
 ## Thermal sensing (`mcpManager`)
 
@@ -186,8 +184,7 @@ autonomously commands the affected subsystem off through `subsystemManager`
 **FPManager tracks DRIVETRAIN, ARM, SCIENCE, and LOGIC independently.** It
 can power off DRIVETRAIN/ARM/SCIENCE. It **cannot** power off LOGIC — that's
 the flight computer FPManager itself runs on — so a LOGIC fault is
-alert-only. **AUX has no power/thermal sensor on this board and isn't
-monitored by FPManager at all.**
+alert-only.
 
 ### Parameters (tunable thresholds)
 
@@ -247,7 +244,7 @@ show one of:
   (`make build-rp2350`) and restart GDS.
 - No response at all — check the Events tab for `CommandDroppedQueueOverflow`
   or `TooManyCommands`; otherwise this usually indicates a serial/connection
-  problem rather than a firmware one (see README.md's troubleshooting
+  problem rather than a firmware one (see ../README.md's troubleshooting
   sections).
 
 ## Quick Checklist for a Power-On Sequence

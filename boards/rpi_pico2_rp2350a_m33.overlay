@@ -13,9 +13,10 @@
     };
 
     /*
-     * Native RP2350 power-enable outputs per the PDB GPIO map (Rev G):
-     * GPIO4-9 drivetrain, GPIO10 arm, GPIO11 science, GPIO12 aux. All
-     * active-high, all must come up inactive/low.
+     * Native RP2350 power-enable outputs per the schematic GPIO breakout:
+     * GPIO4-9 drivetrain, GPIO10 arm, GPIO11 science. All active-high, all
+     * must come up inactive/low. GPIO13 and up are an unassigned generic
+     * breakout header (DF11 18DP, CN6) with no dedicated function.
      */
     billee-gpio-outputs {
         compatible = "gpio-leds";
@@ -28,11 +29,10 @@
         drive_enable_6: drive-enable-6 { gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>; };
         arm_enable: arm-enable { gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>; };
         science_enable: science-enable { gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>; };
-        aux_enable: aux-enable { gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>; };
     };
 
     /*
-     * E-STOP status input, GPIO13. Not active-low in the devicetree sense --
+     * E-STOP status input, GPIO12. Not active-low in the devicetree sense --
      * the raw pin level is passed straight through so Fw::Logic::LOW/HIGH in
      * software matches the physical line: pulled LOW = E-STOP on, HIGH = off.
      * Internal pull-up so the input reads a defined HIGH (off) if the E-STOP
@@ -41,7 +41,7 @@
     billee-gpio-inputs {
         compatible = "gpio-keys";
 
-        estop_status: estop-status { gpios = <&gpio0 13 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; };
+        estop_status: estop-status { gpios = <&gpio0 12 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; };
     };
 };
 

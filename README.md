@@ -28,7 +28,7 @@ This README covers building, flashing, and running the firmware, plus a
 developer reference for working with fprime-zephyr on this target. For
 **operating** the rover once it's running — sending commands, reading
 telemetry, understanding E-STOP and fault-protection behavior — see
-[`OPERATOR_MANUAL.md`](OPERATOR_MANUAL.md).
+[`docs/OPERATOR_MANUAL.md`](docs/OPERATOR_MANUAL.md).
 
 ---
 
@@ -235,7 +235,7 @@ CCSDS framing.
 ## Operating the rover
 
 Once GDS is connected and showing live telemetry, see
-**[`OPERATOR_MANUAL.md`](OPERATOR_MANUAL.md)** for the full command
+**[`docs/OPERATOR_MANUAL.md`](docs/OPERATOR_MANUAL.md)** for the full command
 reference: subsystem power control, E-STOP behavior, thermal/power
 telemetry, and the FPManager fault-protection state machine.
 
@@ -338,7 +338,7 @@ flowchart TD
 ```
 
 This project's own components sit alongside the reference topology, driven
-by the same rate groups: `SubsystemManager` (drivetrain/arm/science/aux power
+by the same rate groups: `SubsystemManager` (drivetrain/arm/science power
 enables + E-STOP input), `McpManager` (3× MCP9808 thermal sensors over I2C1),
 `InaManager` (9× INA780B power monitors over I2C0), and `FPManager` (software
 fault protection, consuming readings pushed in by the two sensor managers).
@@ -875,4 +875,4 @@ telemetry and safe-command test (`make gds mac` / `wsl`).
 - `InaManager`'s 9 INA780B sensors and `McpManager`'s 3 MCP9808 sensors are
   read continuously regardless of whether hardware is connected; with
   nothing attached, both correctly report failure (see
-  `OPERATOR_MANUAL.md`) rather than silently going stale.
+  `docs/OPERATOR_MANUAL.md`) rather than silently going stale.
