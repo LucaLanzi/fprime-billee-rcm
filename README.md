@@ -223,6 +223,33 @@ See [Troubleshooting](#troubleshooting) below, and
 [F´ / fprime-zephyr / Zephyr compatibility layer](#f--fprime-zephyr--zephyr-compatibility-layer)
 for the compatibility-layer details.
 
+## Flash and run — Linux (Jetson / native)
+
+On the Jetson there is no desktop auto-mounter, and Ubuntu 24.04's
+`chromium-browser`-style snap situation also affects `picotool` (not in apt).
+`make cpfirm` handles all of it:
+
+1. One-time: `make setup-picotool` — installs `picotool` from apt, or builds it
+   from source into `build-tools/` if apt has no package (it doesn't on L4T),
+   plus a udev rule so it runs without `sudo`.
+2. Put the board in BOOTSEL:
+   - hold **BOOTSEL**, tap RESET / replug USB, release; **or**
+   - `make bootsel` (reboots a *running* board into BOOTSEL via picotool — needs
+     firmware support; the button always works).
+3. Flash:
+   ```bash
+   make cpfirm
+   ```
+   `cpfirm` tries, in order: a mounted `RP2350`/`RPI-RP2` volume
+   (`$LINUX_BOOTSEL_VOLUME`); an unmounted `RP2350`-labelled block device, which
+   it `sudo mount`s, copies to, and unmounts; then `picotool load -x -f`. It
+   errors clearly if the board is still running firmware (`/dev/ttyACM0`
+   present) rather than in BOOTSEL.
+4. The board reboots into the new firmware as `/dev/ttyACM0`. Start GDS with
+   `make gds` (add `UART_DEVICE=/dev/ttyACM1` if it enumerates elsewhere), or
+   run it as an always-on service — see
+   [Run GDS as a service](#run-gds-as-a-service-headless-jetson).
+
 ## Start GDS
 
 Covered inline above for each platform (`make gds mac` / `make gds wsl` /
@@ -231,6 +258,41 @@ has `fprime-gds`, the generated dictionary exists, and the serial device is a
 character device, then starts GDS with no local deployment executable, the
 generated dictionary, UART communication, and `space-packet-space-data-link`
 CCSDS framing.
+
+`lan_uart_gds.sh` is the same launcher but binds the web UI to `0.0.0.0` (LAN
+access), for a headless Jetson you reach from another machine.
+
+## Run GDS as a service (headless Jetson)
+
+`make install-gds-service` installs a systemd service that runs
+`lan_uart_gds.sh` at every boot inside a **detached `screen` session**, so the
+GDS comes up unattended and you can attach to it live over SSH.
+
+```bash
+make install-gds-service     # sudo; run from your normal account (needs $SUDO_USER)
+```
+
+What it does ([`install-lan-gds-service.sh`](install-lan-gds-service.sh)):
+
+- `apt-get install screen` if it isn't already present.
+- Writes `/etc/systemd/system/billee-lan-gds.service`, running
+  `screen -DmS billee-lan-gds gds-run-loop.sh` as your user, in the `dialout`
+  group, after `network-online.target`, then `systemctl enable --now`.
+- [`gds-run-loop.sh`](gds-run-loop.sh) runs `lan_uart_gds.sh` in a loop: on any
+  exit — board unplugged, missing build, crash — it waits **10 s**
+  (`GDS_RETRY_SECONDS`) and starts it again. `Restart=always` /
+  `RestartSec=10` in the unit is a backstop if `screen` itself dies.
+
+Managing it:
+
+| Command | Purpose |
+| --- | --- |
+| `make gds-attach` | Attach to the live `screen` session (`Ctrl-A` then `D` to detach) |
+| `make gds-service-status` | `systemctl status` + recent `journalctl` lines |
+| `sudo systemctl stop billee-lan-gds` | Stop it (stays enabled for next boot) |
+| `make uninstall-gds-service` | Disable and remove the unit |
+
+Run `screen -r billee-lan-gds` as the same user the service runs as.
 
 ## Operating the rover
 
@@ -641,7 +703,7 @@ parameter entries; data-product catalog size.
 
 | File | Purpose |
 | --- | --- |
-| `Makefile` | Setup, build, flash (`cpfirm mac`/`wsl`), and GDS (`gds mac`/`wsl`) entry points |
+| `Makefile` | Setup, build, flash (`cpfirm` — mac/wsl/Linux auto-mount/picotool), `bootsel`, `setup-picotool`, GDS (`gds mac`/`wsl`), and the `install-gds-service` systemd entry points |
 | `prj.conf` | Zephyr threads, heap, C++, USB CDC ACM, I2C, and device configuration |
 | `boards/rpi_pico2_rp2350a_m33.overlay` | Routes the chosen console to USB CDC ACM; subsystem power-enable and E-STOP GPIO pins; I2C0/I2C1 pin remap |
 | `CMakeLists.txt` | Loads Zephyr, F´, compatibility code, configuration, and deployment |
@@ -658,6 +720,9 @@ parameter entries; data-product catalog size.
 | `rp2350Deployment/Top/topology.fpp` | Instance list and port connections |
 | `rp2350Deployment/Top/rp2350DeploymentTopology.cpp` | Zephyr device configuration and topology startup |
 | `uart_gds.sh` | CCSDS-over-UART GDS launcher (used by `make gds`) |
+| `lan_uart_gds.sh` | Same launcher, web UI bound to `0.0.0.0` for LAN access |
+| `gds-run-loop.sh` | Runs `lan_uart_gds.sh` forever, retrying 10s after any exit |
+| `install-lan-gds-service.sh` | Installs `screen` + the `billee-lan-gds` systemd service (`make install-gds-service`) |
 | `west.yml` | Pinned Zephyr and required modules |
 | `settings.ini` | F´ framework and library locations |
 
