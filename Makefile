@@ -180,9 +180,13 @@ cpfirm: ## Copy build-artifacts/zephyr.uf2 to the board in BOOTSEL mode (Linux: 
 				mnt="$$(mktemp -d)"; \
 				echo "[INFO] Mounting $$dev at $$mnt (sudo)..."; \
 				sudo mount "$$dev" "$$mnt" || { echo "[ERROR] mount $$dev failed."; rmdir "$$mnt" 2>/dev/null || true; exit 1; }; \
-				cp "$(UF2_FILE)" "$$mnt/" && sync; \
+				sudo cp "$(UF2_FILE)" "$$mnt/"; cp_rc=$$?; \
+				sync; \
 				sudo umount "$$mnt" 2>/dev/null || true; \
 				rmdir "$$mnt" 2>/dev/null || true; \
+				if [ "$$cp_rc" -ne 0 ]; then \
+					echo "[ERROR] copy to $$dev failed (rc $$cp_rc)."; exit 1; \
+				fi; \
 				echo "[INFO] Flashed via $$dev — the board resets itself."; \
 				copied=1; \
 			fi; \
