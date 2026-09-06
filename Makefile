@@ -55,7 +55,7 @@ build-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
 USBIPD_BUSID ?= 2-4
 MAC_UART_DEVICE ?= /dev/tty.usbmodem2101
 
-.PHONY: gds wsl mac
+.PHONY: gds wsl mac linux
 
 gds:
 	@if [ "$(filter wsl,$(MAKECMDGOALS))" = "wsl" ]; then \
@@ -79,13 +79,20 @@ wsl:
 mac:
 	@:
 
+linux:
+	@:
+
 UF2_FILE := $(PROJECT_ROOT)/build-artifacts/zephyr.uf2
 
 MAC_BOOTSEL_VOLUME ?= /Volumes/RP2350
-LINUX_BOOTSEL_VOLUME ?= /media/$(shell whoami)/RP2350
 WSL_BOOTSEL_DRIVE ?= D:
+# Linux: candidate auto-mount points, checked in order. If none exist, cpfirm
+# auto-detects an unmounted RP2350 / RPI-RP2 mass-storage device and mounts it
+# (needs sudo), then falls back to picotool if that's installed.
+LINUX_BOOTSEL_VOLUME ?= /media/$(shell whoami)/RP2350 /run/media/$(shell whoami)/RP2350 /media/RP2350 /mnt/RP2350
+LINUX_BOOTSEL_LABELS ?= RP2350 RPI-RP2
 
-cpfirm: ## Copy build-artifacts/zephyr.uf2 to the board while it is in BOOTSEL mode
+cpfirm: ## Copy build-artifacts/zephyr.uf2 to the board in BOOTSEL mode (Linux: auto-mounts or uses picotool)
 	@test -f "$(UF2_FILE)" || { \
 		echo "[ERROR] $(UF2_FILE) not found. Run 'make build-rp2350' first."; \
 		exit 1; \
@@ -112,9 +119,44 @@ cpfirm: ## Copy build-artifacts/zephyr.uf2 to the board while it is in BOOTSEL m
 			}; \
 		echo "[INFO] Copied to $(WSL_BOOTSEL_DRIVE)"; \
 	else \
-		test -d "$(LINUX_BOOTSEL_VOLUME)" || { \
-			echo "[ERROR] $(LINUX_BOOTSEL_VOLUME) not found. Is the board in BOOTSEL mode? Set LINUX_BOOTSEL_VOLUME if it mounts elsewhere."; \
+		copied=""; \
+		for vol in $(LINUX_BOOTSEL_VOLUME); do \
+			if [ -d "$$vol" ]; then \
+				echo "[INFO] Found mounted BOOTSEL volume $$vol"; \
+				cp "$(UF2_FILE)" "$$vol/" && sync && echo "[INFO] Copied to $$vol"; \
+				copied=1; break; \
+			fi; \
+		done; \
+		if [ -z "$$copied" ]; then \
+			dev=""; \
+			for lbl in $(LINUX_BOOTSEL_LABELS); do \
+				dev="$$(lsblk -rpno NAME,LABEL 2>/dev/null | awk -v l="$$lbl" '$$2==l{print $$1; exit}')"; \
+				[ -n "$$dev" ] && { echo "[INFO] Found BOOTSEL block device $$dev (label $$lbl)"; break; }; \
+			done; \
+			if [ -n "$$dev" ]; then \
+				mnt="$$(mktemp -d)"; \
+				echo "[INFO] Mounting $$dev at $$mnt (sudo)..."; \
+				sudo mount "$$dev" "$$mnt" || { echo "[ERROR] mount $$dev failed."; rmdir "$$mnt" 2>/dev/null || true; exit 1; }; \
+				cp "$(UF2_FILE)" "$$mnt/" && sync; \
+				sudo umount "$$mnt" 2>/dev/null || true; \
+				rmdir "$$mnt" 2>/dev/null || true; \
+				echo "[INFO] Flashed via $$dev — the board resets itself."; \
+				copied=1; \
+			fi; \
+		fi; \
+		if [ -z "$$copied" ] && command -v picotool >/dev/null 2>&1; then \
+			echo "[INFO] No BOOTSEL volume found; trying picotool (add -f yourself to force a running board into BOOTSEL)..."; \
+			if picotool load -x "$(UF2_FILE)" || sudo picotool load -x "$(UF2_FILE)"; then \
+				echo "[INFO] Flashed with picotool."; copied=1; \
+			fi; \
+		fi; \
+		if [ -z "$$copied" ]; then \
+			echo "[ERROR] No RP2350 in BOOTSEL mode found."; \
+			echo "        Put the board in BOOTSEL: hold BOOTSEL, tap RESET (or replug), then re-run."; \
+			echo "        Or install picotool ('sudo apt install picotool') and run:"; \
+			echo "            picotool reboot -f -u && make cpfirm"; \
+			echo "        If it auto-mounts to an unusual path:"; \
+			echo "            make cpfirm LINUX_BOOTSEL_VOLUME=/path/to/RP2350"; \
 			exit 1; \
-		}; \
-		cp "$(UF2_FILE)" "$(LINUX_BOOTSEL_VOLUME)/" && echo "[INFO] Copied to $(LINUX_BOOTSEL_VOLUME)"; \
+		fi; \
 	fi
