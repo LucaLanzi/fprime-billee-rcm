@@ -86,8 +86,10 @@ build-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
 
 USBIPD_BUSID ?= 2-4
 MAC_UART_DEVICE ?= /dev/tty.usbmodem2101
+GDS_SERVICE ?= billee-lan-gds
 
-.PHONY: gds wsl mac linux bootsel
+.PHONY: gds wsl mac linux bootsel \
+        install-gds-service uninstall-gds-service gds-service-status gds-attach
 
 bootsel: ## Reboot a running RP2350 into BOOTSEL mode (needs picotool + firmware support)
 	@command -v picotool >/dev/null 2>&1 || { \
@@ -114,6 +116,23 @@ gds:
 	else \
 		./uart_gds.sh; \
 	fi
+
+install-gds-service: ## Install+enable a systemd service: lan_uart_gds.sh in a detached screen, auto-retry every 10s
+	sudo ./install-lan-gds-service.sh
+
+uninstall-gds-service: ## Stop and remove the billee-lan-gds systemd service
+	-sudo systemctl disable --now $(GDS_SERVICE).service
+	sudo rm -f /etc/systemd/system/$(GDS_SERVICE).service
+	sudo systemctl daemon-reload
+	@echo "[INFO] $(GDS_SERVICE) removed"
+
+gds-service-status: ## Show billee-lan-gds service status and recent logs
+	@systemctl status $(GDS_SERVICE).service --no-pager || true
+	@echo
+	@journalctl -u $(GDS_SERVICE).service -n 30 --no-pager || true
+
+gds-attach: ## Attach to the running GDS screen session (Ctrl-A then D to detach)
+	screen -r $(GDS_SERVICE)
 
 # Dummy targets used only as command-line keywords
 wsl:
