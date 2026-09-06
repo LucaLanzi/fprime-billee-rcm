@@ -13,6 +13,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 PICOTOOL_DIR := $(PROJECT_ROOT)/build-tools
 
 help: ## Show available commands
+	@$(MAKE) --no-print-directory print-banner
 	@echo "Available commands:"
 	@grep -E '^[A-Za-z0-9_.-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"} {printf "  %-20s %s\n", $$1, $$2}'
 
