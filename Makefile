@@ -8,7 +8,9 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-zephyr clean-zephyr build-rp2350 gds cpfirm print-banner
+.PHONY: help setup setup-zephyr setup-picotool clean-zephyr build-rp2350 gds cpfirm print-banner
+
+PICOTOOL_DIR := $(PROJECT_ROOT)/build-tools
 
 help: ## Show available commands
 	@echo "Available commands:"
@@ -19,8 +21,38 @@ setup: ## Create venv and install project dependencies
 	git submodule update --init --recursive
 	$(VENV_PYTHON) -m pip install -r requirements.txt
 	grep -q "FPRIME_FRAMEWORK_PATH" fprime-venv/bin/activate || echo 'export FPRIME_FRAMEWORK_PATH=$(PROJECT_ROOT)/lib/fprime' >> fprime-venv/bin/activate
+	-@$(MAKE) --no-print-directory setup-picotool || echo "[WARN] picotool not installed — flash via the BOOTSEL button, or retry 'make setup-picotool'"
 	@echo "make setup complete"
 	@$(MAKE) --no-print-directory print-banner
+
+setup-picotool: ## Install picotool (apt if available, else build from source)
+	@if command -v picotool >/dev/null 2>&1; then \
+		echo "[INFO] picotool already installed: $$(command -v picotool)"; \
+		exit 0; \
+	fi; \
+	echo "[INFO] Installing picotool via apt..."; \
+	if sudo apt-get update -qq && sudo apt-get install -y picotool >/dev/null 2>&1 \
+	   && command -v picotool >/dev/null 2>&1; then \
+		echo "[INFO] Installed picotool from apt."; exit 0; \
+	fi; \
+	echo "[INFO] apt has no picotool for this release — building from source..."; \
+	sudo apt-get install -y git cmake build-essential pkg-config libusb-1.0-0-dev || exit 1; \
+	rm -rf "$(PICOTOOL_DIR)/picotool" "$(PICOTOOL_DIR)/pico-sdk"; \
+	mkdir -p "$(PICOTOOL_DIR)"; \
+	git clone --depth 1 https://github.com/raspberrypi/pico-sdk "$(PICOTOOL_DIR)/pico-sdk" || exit 1; \
+	git clone --depth 1 https://github.com/raspberrypi/picotool "$(PICOTOOL_DIR)/picotool" || exit 1; \
+	cmake -S "$(PICOTOOL_DIR)/picotool" -B "$(PICOTOOL_DIR)/picotool/build" \
+		-DPICO_SDK_PATH="$(PICOTOOL_DIR)/pico-sdk" || exit 1; \
+	cmake --build "$(PICOTOOL_DIR)/picotool/build" -j"$$(nproc)" || exit 1; \
+	sudo cmake --install "$(PICOTOOL_DIR)/picotool/build" || exit 1; \
+	printf 'SUBSYSTEM=="usb", ATTRS{idVendor}=="2e8a", MODE="0666", TAG+="uaccess"\n' \
+		| sudo tee /etc/udev/rules.d/99-picotool.rules >/dev/null; \
+	sudo udevadm control --reload-rules 2>/dev/null && sudo udevadm trigger 2>/dev/null || true; \
+	if command -v picotool >/dev/null 2>&1; then \
+		echo "[INFO] picotool installed: $$(picotool version 2>/dev/null | head -1)"; \
+	else \
+		echo "[ERROR] picotool built but not on PATH — check /usr/local/bin/picotool"; exit 1; \
+	fi
 
 setup-zephyr: ## Install Zephyr dependencies
 	$(VENV_PYTHON) -m pip install -r requirements-zephyr.txt
@@ -55,7 +87,18 @@ build-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
 USBIPD_BUSID ?= 2-4
 MAC_UART_DEVICE ?= /dev/tty.usbmodem2101
 
-.PHONY: gds wsl mac linux
+.PHONY: gds wsl mac linux bootsel
+
+bootsel: ## Reboot a running RP2350 into BOOTSEL mode (needs picotool + firmware support)
+	@command -v picotool >/dev/null 2>&1 || { \
+		echo "[ERROR] picotool not installed. sudo apt install picotool"; exit 1; \
+	}
+	@picotool reboot -f -u || sudo picotool reboot -f -u || { \
+		echo "[ERROR] picotool couldn't reboot the board. Use the BOOTSEL button:"; \
+		echo "        hold BOOTSEL, tap RESET (or replug USB), release."; \
+		exit 1; \
+	}
+	@echo "[INFO] Board should now be in BOOTSEL — run 'make cpfirm'."
 
 gds:
 	@if [ "$(filter wsl,$(MAKECMDGOALS))" = "wsl" ]; then \
@@ -145,18 +188,21 @@ cpfirm: ## Copy build-artifacts/zephyr.uf2 to the board in BOOTSEL mode (Linux: 
 			fi; \
 		fi; \
 		if [ -z "$$copied" ] && command -v picotool >/dev/null 2>&1; then \
-			echo "[INFO] No BOOTSEL volume found; trying picotool (add -f yourself to force a running board into BOOTSEL)..."; \
-			if picotool load -x "$(UF2_FILE)" || sudo picotool load -x "$(UF2_FILE)"; then \
+			echo "[INFO] No BOOTSEL disk found — trying picotool ('-f' reboots a running board into BOOTSEL)..."; \
+			if picotool load -x -f "$(UF2_FILE)" || sudo picotool load -x -f "$(UF2_FILE)"; then \
 				echo "[INFO] Flashed with picotool."; copied=1; \
 			fi; \
 		fi; \
 		if [ -z "$$copied" ]; then \
-			echo "[ERROR] No RP2350 in BOOTSEL mode found."; \
-			echo "        Put the board in BOOTSEL: hold BOOTSEL, tap RESET (or replug), then re-run."; \
-			echo "        Or install picotool ('sudo apt install picotool') and run:"; \
-			echo "            picotool reboot -f -u && make cpfirm"; \
-			echo "        If it auto-mounts to an unusual path:"; \
-			echo "            make cpfirm LINUX_BOOTSEL_VOLUME=/path/to/RP2350"; \
+			echo "[ERROR] No RP2350 in BOOTSEL mode, and picotool couldn't reach it."; \
+			echo "        /dev/ttyACM* present means firmware is running, NOT in BOOTSEL."; \
+			echo "        Fixes, easiest first:"; \
+			echo "          1. sudo apt install picotool   (then re-run 'make cpfirm')"; \
+			echo "          2. Hold the board's BOOTSEL button, tap RESET / replug USB,"; \
+			echo "             release. 'lsblk' then shows a ~1MB disk labelled RP2350."; \
+			echo "          3. No BOOTSEL button? Flash over SWD with a debug probe:"; \
+			echo "             picotool load -x build-artifacts/zephyr.uf2 --bus <n> (via probe)"; \
+			echo "        LINUX_BOOTSEL_VOLUME must be a MOUNT DIRECTORY, not /dev/tty*."; \
 			exit 1; \
 		fi; \
 	fi
