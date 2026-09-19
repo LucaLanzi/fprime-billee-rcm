@@ -1,0 +1,24 @@
+# Stable device symlink for the BILLEE Rover Control Module (RP2350).
+#
+# On a Jetson also running fprime-arduino-billee-scm's GDS, /dev/ttyACMx
+# numbering is assigned by USB enumeration order, not device identity -- it
+# is NOT stable across a reboot (this bit us: the RCM and SCM boards swapped
+# ttyACM0/ttyACM1 between boots, so hardcoded device paths pointed GDS at the
+# wrong board). This rule matches the RP2350's runtime USB identity
+# (confirmed via `udevadm info -a -n /dev/ttyACMx` on the physical hardware)
+# and creates a persistent /dev/ttyBILLEE_RCM symlink that always points at
+# this board, regardless of which raw ttyACMx node the kernel assigns it.
+#
+# idVendor/idProduct match by board type (2fe3:0004 is this deployment's own
+# runtime CDC-ACM identity, set in prj.conf -- see that file's comment about
+# it being Zephyr's stock sample VID/PID). Correct as long as only one
+# RP2350 running this firmware is attached to the Jetson at a time. If a
+# second one is ever attached simultaneously, match on the serial below
+# instead (ATTRS{serial}=="4150345A34363717", captured from this specific
+# board) to disambiguate individual units.
+#
+# Install: `make setup-udev` (or `make setup`, which chains it), or manually:
+#   sudo cp udev/99-billee-rcm.rules /etc/udev/rules.d/99-billee-rcm.rules
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="0004", SYMLINK+="ttyBILLEE_RCM", MODE:="0666"

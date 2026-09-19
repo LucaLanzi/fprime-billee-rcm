@@ -57,6 +57,9 @@ Group=${RUN_GROUP}
 SupplementaryGroups=dialout
 WorkingDirectory=${SCRIPT_DIR}
 Environment=GDS_RETRY_SECONDS=${RETRY_SECONDS}
+# Pinned explicitly (matches lan_uart_gds.sh's own default) rather than left
+# implicit, so this unit doesn't silently regress to a raw /dev/ttyACMx path.
+Environment=UART_DEVICE=/dev/ttyBILLEE_RCM
 # -D -m : run screen detached but WITHOUT forking, so systemd tracks it.
 ExecStart=${SCREEN_BIN} -DmS ${SERVICE_NAME} ${LOOP_SCRIPT}
 ExecStop=${SCREEN_BIN} -S ${SERVICE_NAME} -X quit

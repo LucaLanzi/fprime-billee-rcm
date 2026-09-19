@@ -846,33 +846,48 @@ If none exists, repeat the USB/IP attachment procedure.
 5. Run with detailed logging: `./uart_gds.sh --log-to-stdout --log-level-gds DEBUG`.
 6. Confirm the board didn't return to BOOTSEL and still appears as `2FE3:0004`.
 
-### GDS doesn't connect on a fresh boot, but a command briefly "wakes" it
+### Board unreachable or "connects but no traffic" on a shared Jetson
 
-`Zephyr::ZephyrUartDriver::send_handler` (`lib/fprime-zephyr`) transmits with
-`uart_poll_out()` on the USBD CDC-ACM class, which silently drops outbound
-bytes whenever the host hasn't asserted the DTR line — the same host-DTR
-sensitivity already noted above for raw `cat`/`stty` captures on macOS, except
-this hits `fprime-gds` itself, not just manual captures. `fprime-gds`'s own
-UART adapter (`fprime_gds/common/communication/adapters/uart.py`, pip-vendored
-via `lib/fprime/requirements.txt` — not a submodule this project can patch
-upstream) opens the port with a bare `serial.Serial(self.device, self.baud)`
-and never touches `dtr`/`rts`, so the RP2350 sees DTR low and drops telemetry
-outright. A command round-trip can look like it "wakes" the connection
-momentarily, but it isn't a real fix — periodic telemetry drops again right
-after, since the DTR state itself never actually changed.
+This project and [`fprime-arduino-billee-scm`](../fprime-arduino-billee-scm)
+normally run side by side on the same Jetson. Two distinct, previously
+misdiagnosed problems can both produce "GDS looks connected but there's no
+telemetry" — an earlier attempt fixed neither by patching `fprime-gds`'s
+UART adapter to assert `dtr`/`rts`; that patch has been removed, since
+directly capturing the firmware's own boot-time output over `pyserial`
+confirmed the RP2350 side was never the actual bug.
 
-Confirmed on hardware: a raw `pyserial` capture that explicitly sets
-`ser.dtr = True` on open shows the firmware transmitting steadily within a
-few hundred ms of boot with zero drops — the firmware side is not the bug.
+**1. `/dev/ttyACMx` numbering isn't stable across a reboot.** Which raw
+device node each board gets is assigned by USB enumeration order, not
+device identity — like DHCP reassigning IP addresses. A hardcoded
+`UART_DEVICE=/dev/ttyACM0` can silently point at the *other* board after a
+reboot. Fixed by a project-owned udev rule (`udev/99-billee-rcm.rules`,
+installed automatically by `make setup` via `make setup-udev`) that creates
+a persistent `/dev/ttyBILLEE_RCM` symlink keyed on this board's USB
+identity (`2FE3:0004`), always pointing at the RP2350 regardless of which
+`ttyACMx` node the kernel assigns it. `uart_gds.sh`/`lan_uart_gds.sh` and
+the systemd service now default to this symlink. This matches by board
+*type*, correct as long as only one RP2350 is attached to this Jetson at a
+time — see the comments in `udev/99-billee-rcm.rules` for upgrading to
+serial-number matching if that ever changes.
 
-Fix: `make patch-gds-uart-dtr` (run automatically as part of `make setup`)
-patches the installed adapter to set `self.serial.dtr = True` /
-`self.serial.rts = True` right after opening the port. Because this lives in
-a pip-installed file, it doesn't survive recreating `fprime-venv` from
-scratch on its own — that's exactly why the patch step is wired into `make
-setup` rather than documented as a one-off manual edit. If `fprime-gds` is
-ever reinstalled or upgraded outside of `make setup`, rerun
-`make patch-gds-uart-dtr` (it's idempotent — safe to run again).
+**2. Starting one deployment's GDS could silently kill the other's.**
+`uart_gds.sh`/`lan_uart_gds.sh` clean up stale processes on every startup
+with `pkill -9 -f "fprime_gds.executables.comm"` — a pattern that matched by
+bare module name, not by which repo/venv launched it. Confirmed live on
+this Jetson: starting `fprime-arduino-billee-scm`'s GDS ~60s after this
+project's was already running killed this project's comm subprocess as
+collateral damage, leaving its dashboard "up" (port still listening) but
+with nothing actually reading `/dev/ttyACM0` — exactly this symptom, with
+no DTR involvement at all. Fixed by scoping the cleanup patterns to this
+repo's own `fprime-venv` path, and by giving each deployment its own
+explicit `--zmq-transport` IPC socket pair (`/tmp/fprime-server-{in,out}-rcm`
+vs. `...-scm`) instead of relying on `fprime-gds` version-dependent
+defaults that happened to differ only by coincidence of the two repos'
+separately pinned `fprime-gds` versions.
+
+If GDS still shows no traffic after both of the above are in place, work
+through the general checklist above (stale processes holding the port,
+dictionary freshness, framing selection) before suspecting the board again.
 
 ### Build selects `/usr/bin/cmake` 3.22
 
