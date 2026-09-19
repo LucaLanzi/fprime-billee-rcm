@@ -8,7 +8,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-zephyr setup-picotool clean-zephyr build-rp2350 gds cpfirm print-banner
+.PHONY: help setup setup-zephyr setup-picotool patch-gds-uart-dtr clean-zephyr build-rp2350 gds cpfirm print-banner
 
 PICOTOOL_DIR := $(PROJECT_ROOT)/build-tools
 
@@ -22,9 +22,20 @@ setup: ## Create venv and install project dependencies
 	git submodule update --init --recursive
 	$(VENV_PYTHON) -m pip install -r requirements.txt
 	grep -q "FPRIME_FRAMEWORK_PATH" fprime-venv/bin/activate || echo 'export FPRIME_FRAMEWORK_PATH=$(PROJECT_ROOT)/lib/fprime' >> fprime-venv/bin/activate
+	@$(MAKE) --no-print-directory patch-gds-uart-dtr
 	-@$(MAKE) --no-print-directory setup-picotool || echo "[WARN] picotool not installed — flash via the BOOTSEL button, or retry 'make setup-picotool'"
 	@echo "make setup complete"
 	@$(MAKE) --no-print-directory print-banner
+
+patch-gds-uart-dtr: ## Assert DTR/RTS in fprime-gds's UART adapter (pip-vendored; not a submodule we can patch upstream)
+	@f=$$(ls fprime-venv/lib/python*/site-packages/fprime_gds/common/communication/adapters/uart.py 2>/dev/null); \
+	if [ -z "$$f" ]; then echo "[WARN] fprime_gds uart adapter not found — run 'make setup' first"; exit 0; fi; \
+	if grep -q "self.serial.dtr = True" "$$f"; then \
+		echo "[INFO] fprime-gds UART DTR patch already applied"; \
+	else \
+		sed -i 's/self.serial = serial.Serial(self.device, self.baud)/self.serial = serial.Serial(self.device, self.baud)\n            self.serial.dtr = True\n            self.serial.rts = True/' "$$f"; \
+		echo "[INFO] Patched $$f to assert DTR\/RTS on open"; \
+	fi
 
 setup-picotool: ## Install picotool (apt if available, else build from source)
 	@if command -v picotool >/dev/null 2>&1; then \

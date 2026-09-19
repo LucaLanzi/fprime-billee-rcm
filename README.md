@@ -846,6 +846,34 @@ If none exists, repeat the USB/IP attachment procedure.
 5. Run with detailed logging: `./uart_gds.sh --log-to-stdout --log-level-gds DEBUG`.
 6. Confirm the board didn't return to BOOTSEL and still appears as `2FE3:0004`.
 
+### GDS doesn't connect on a fresh boot, but a command briefly "wakes" it
+
+`Zephyr::ZephyrUartDriver::send_handler` (`lib/fprime-zephyr`) transmits with
+`uart_poll_out()` on the USBD CDC-ACM class, which silently drops outbound
+bytes whenever the host hasn't asserted the DTR line — the same host-DTR
+sensitivity already noted above for raw `cat`/`stty` captures on macOS, except
+this hits `fprime-gds` itself, not just manual captures. `fprime-gds`'s own
+UART adapter (`fprime_gds/common/communication/adapters/uart.py`, pip-vendored
+via `lib/fprime/requirements.txt` — not a submodule this project can patch
+upstream) opens the port with a bare `serial.Serial(self.device, self.baud)`
+and never touches `dtr`/`rts`, so the RP2350 sees DTR low and drops telemetry
+outright. A command round-trip can look like it "wakes" the connection
+momentarily, but it isn't a real fix — periodic telemetry drops again right
+after, since the DTR state itself never actually changed.
+
+Confirmed on hardware: a raw `pyserial` capture that explicitly sets
+`ser.dtr = True` on open shows the firmware transmitting steadily within a
+few hundred ms of boot with zero drops — the firmware side is not the bug.
+
+Fix: `make patch-gds-uart-dtr` (run automatically as part of `make setup`)
+patches the installed adapter to set `self.serial.dtr = True` /
+`self.serial.rts = True` right after opening the port. Because this lives in
+a pip-installed file, it doesn't survive recreating `fprime-venv` from
+scratch on its own — that's exactly why the patch step is wired into `make
+setup` rather than documented as a one-off manual edit. If `fprime-gds` is
+ever reinstalled or upgraded outside of `make setup`, rerun
+`make patch-gds-uart-dtr` (it's idempotent — safe to run again).
+
 ### Build selects `/usr/bin/cmake` 3.22
 
 Build through Make from the repository root (`make build-rp2350`) — the
