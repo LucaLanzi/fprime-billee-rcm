@@ -1,0 +1,5 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/fprime-venv/bin/python",
+    "cmake.cmakePath": "${workspaceFolder}/fprime-venv/bin/cmake",
+    "cmake.generator": "Ninja"
+}

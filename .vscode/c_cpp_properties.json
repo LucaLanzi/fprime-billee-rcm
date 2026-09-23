@@ -1,0 +1,13 @@
+{
+    "configurations": [
+        {
+            "name": "fprime-rcm",
+            "compileCommands": "${workspaceFolder}/build-fprime-automatic-native/compile_commands.json",
+            "compilerPath": "/home/luca_lanzi/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-g++",
+            "cStandard": "c17",
+            "cppStandard": "c++14",
+            "intelliSenseMode": "linux-gcc-arm"
+        }
+    ],
+    "version": 4
+}
