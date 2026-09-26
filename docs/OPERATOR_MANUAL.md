@@ -60,19 +60,34 @@ it low. All six drivetrain pins are only ever set together — there is no
 per-motor command. There is no command for the logic/flight-computer board —
 it can't be power-cycled by anything running on it.
 
-**FPManager can also turn a subsystem off on its own, without an operator
-command** — see [Fault protection (`fpManager`)](#fault-protection-fpmanager)
-below. If a subsystem you didn't command turns off, check the Events tab for
-a `SubsystemFaultShutdown` before assuming a wiring or command problem.
+**Power-ON is refused** (`VALIDATION_ERROR` plus a `PowerOnRejected` event
+giving the reason) when:
 
-### E-STOP status is read-only
+- the E-STOP is engaged (`E_STOP_ENGAGED`),
+- the E-STOP line can't be read (`E_STOP_UNKNOWN`, treated as engaged), or
+- `fpManager` has latched a fault on that subsystem (`FAULT_LATCHED`). Send
+  `fpManager.CLEAR_FAULT` first.
 
-There is no command to set or clear E-STOP — it's a physical safety input,
-not something software can override. Its state is exposed as telemetry and
-events only (below). **The subsystem power commands above do not check
-E-STOP state before acting** — the firmware will happily turn a subsystem on
-even if E-STOP shows engaged. Always check `subsystemManager.E_STOP_Status`
-in the Channels tab before sending a power-on command.
+`OFF` is always accepted.
+
+**A subsystem can also turn off without an operator command**, for two
+reasons: the E-STOP was pressed (`EStopForcedOff`), or fpManager latched a
+fault (`FaultInhibitSet` / `SubsystemFaultShutdown`). See
+[Fault protection (`fpManager`)](#fault-protection-fpmanager).
+
+### E-STOP behavior
+
+There is no command to set or clear E-STOP — it's a physical safety input.
+The hardware AND gates cut all 8 channels the instant it's pressed. The
+firmware adds these rules:
+
+- It polls the E-STOP line at 10 Hz. On the first poll that sees it engaged,
+  every subsystem that was ON is forced OFF in software too
+  (`EStopForcedOff`).
+- **Releasing the E-STOP turns nothing back on.** Each subsystem has to be
+  commanded ON again.
+- While the E-STOP is engaged (or unreadable), every power-ON command is
+  rejected.
 
 ### Telemetry
 
@@ -87,11 +102,16 @@ in the Channels tab before sending a power-on command.
 
 | Event | When it fires |
 |---|---|
-| `SubsystemPowerModeEvent(subsystemName, powerState)` | Logged whenever a `SET_*_POWER_STATE` command, or FPManager's own emergency shutdown, actually changes that subsystem's state (not re-logged for a repeated state). |
-| `EStopEngaged` | Logged once, on the transition from released to engaged. |
-| `EStopReleased` | Logged once, on the transition from engaged to released. |
+| `SubsystemPowerModeEvent(subsystemName, powerState)` | Logged whenever a subsystem's state actually changes, whether from a command, an E-STOP force-off or a fault inhibit (not re-logged for a repeated state). |
+| `EStopEngaged` | Logged once, on the transition to engaged. |
+| `EStopReleased` | Logged once, on the transition to released. Nothing is re-enabled. |
+| `EStopReadFailure` | The E-STOP line couldn't be read; it's treated as engaged. Logged once per failure episode. |
+| `EStopForcedOff` | The E-STOP engaged while subsystems were ON; all were forced OFF. |
+| `PowerOnRejected(subsystemName, reason)` | A power-ON command was refused: `E_STOP_ENGAGED`, `E_STOP_UNKNOWN` or `FAULT_LATCHED`. |
+| `FaultInhibitSet(subsystemName)` / `FaultInhibitCleared(subsystemName)` | fpManager latched a fault inhibit (forced OFF, ON blocked), or released it after `CLEAR_FAULT`. Releasing never turns anything on. |
+| `PowerWriteFailed(subsystemName)` | A GPIO write failed while switching a subsystem; all of its enables were driven OFF. |
 
-Both E-STOP events are edge-triggered — they fire once per transition, not
+The E-STOP events are edge-triggered — they fire once per transition, not
 continuously while E-STOP stays in one state. Use `E_STOP_Status` telemetry
 to check the *current* state at any given moment; use the events to know
 *when* it last changed. If you attach GDS after a transition already
@@ -152,7 +172,7 @@ and logic. Full source: `lib/fprime-billee/Components/InaManager/`.
 ### Telemetry
 
 Each channel carries a `Billee.PowerReading` struct (`voltage`, `current`,
-`power`, `sourceId`, `timestamp`):
+`power`, `sourceId`, `timestamp`, `valid`). Polled at 10 Hz.
 
 | Channel | `sourceId` |
 |---|---|
@@ -161,9 +181,14 @@ Each channel carries a `Billee.PowerReading` struct (`voltage`, `current`,
 | `SCIENCE_POWER` | `SCIENCE` |
 | `LOGIC_POWER` | `LOGIC` |
 
-All nine channels update every poll cycle regardless of read success — a
-failed sensor reports `voltage`/`current`/`power` at their last-known (or
-zero, if never successful) values rather than going silent.
+All nine channels update every poll cycle regardless of read success. A
+failed read reports its last-known values (or zero, if never successful) with
+**`valid = false`**, and fpManager ignores it: a failed read never looks like
+a real 0 V reading.
+
+**Note:** the DRIVE, ARM and SCIENCE sensors measure voltage on the switched
+side, so `voltage` reads about 0 V whenever that channel is off. That's
+normal. LOGIC measures the logic battery directly.
 
 ### Events
 
@@ -171,57 +196,83 @@ zero, if never successful) values rather than going silent.
 |---|---|
 | `InaReadFailure` | Logged once, on the transition into "at least one sensor failing." Does not repeat every cycle while the failure persists. |
 | `InaReadRecovered` | Logged once, when all sensors return to reading successfully after a prior failure. |
+| `InaSensorLost(sensorId)` | One sensor has failed 10 consecutive reads (about 1 s). **Alert only:** that channel keeps running, but it has no current monitoring until the sensor recovers. |
+| `InaSensorRecovered(sensorId)` | That sensor is reading again. |
 
 ## Fault protection (`fpManager`)
 
-Layers software fault protection on top of the sensors above: 6S LiPo
-bus-voltage protection (in addition to the existing hardware failsafe),
-overcurrent protection, and thermal-fault protection. On a fault, it
-autonomously commands the affected subsystem off through `subsystemManager`
-— bypassing the normal command path — and logs why. Full source:
+Software fault protection layered on the sensors above. Full source:
 `lib/fprime-billee/Components/FPManager/`.
 
-**FPManager tracks DRIVETRAIN, ARM, SCIENCE, and LOGIC independently.** It
-can power off DRIVETRAIN/ARM/SCIENCE. It **cannot** power off LOGIC — that's
-the flight computer FPManager itself runs on — so a LOGIC fault is
-alert-only.
+**How it works:**
+
+- **Evaluated per sensor:** each INA780 reading is checked against its
+  subsystem's bounds. A condition has to hold for several consecutive
+  samples before it counts (debounce).
+- **Overcurrent** (`|current|` above the limit) and **overvoltage** are
+  checked all the time.
+- **Undervoltage** is only checked while the subsystem is commanded ON *and*
+  at least `UV_SETTLE_S` after it turned on. An OFF channel reads about 0 V,
+  and that's normal. LOGIC is always checked.
+- **Over-temperature:** an MCP9808 reporting `FAULT` for `DEBOUNCE_THERMAL`
+  consecutive samples trips.
+- **A fault latches.** DRIVETRAIN, ARM or SCIENCE is forced OFF and power-ON
+  commands are rejected until you send `CLEAR_FAULT`. **One wheel faulting
+  shuts off the whole drivetrain.** LOGIC can't be powered off (it's the
+  computer running fpManager), so a LOGIC fault is alert-only.
+- **Sensor loss is alert-only:** an unreadable INA780 or MCP9808 raises an
+  event but never trips anything.
+
+**With 30 A current limits, the drivetrain temperature sensor is the main
+protection for the drive power copper.** The limits are set high on purpose
+for initial testing. The drive pour heats up long before 30 A per wheel, so
+watch `DRIVE_TEMP`.
+
+### Commands
+
+| Mnemonic | Argument | Effect |
+|---|---|---|
+| `fpManager.CLEAR_FAULT` | `subsystem: DRIVETRAIN / ARM / SCIENCE / LOGIC` | Clears a latched fault and releases the inhibit. **It does not turn anything on.** Rejected (`EXECUTION_ERROR`, `FaultClearRejected`) while that subsystem's temperature is still at `FAULT` level. If no fault is latched, it replies `OK` and logs `FaultClearNoop`. |
 
 ### Parameters (tunable thresholds)
 
-Find them by searching `fpManager` in the mnemonic list:
+Search `fpManager` in the mnemonic list. `*_BOUNDS` are structs with
+`vbusFaultLow`, `vbusFaultHigh` and `currentFaultHigh`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `VBUS_FAULT_LOW` | 19.2 V | Undervoltage trip point (3.2 V/cell for a 6S pack) |
-| `VBUS_FAULT_HIGH` | 25.5 V | Overvoltage trip point (4.25 V/cell for a 6S pack) |
-| `CURRENT_FAULT_HIGH` | 15.0 A | Overcurrent trip point, applied uniformly to every monitored subsystem |
+| `DRIVETRAIN_BOUNDS` | 13.6 V / 17.2 V / 30 A | 4S pack. The current limit applies to **each wheel** sensor. |
+| `ARM_BOUNDS` | 21.6 V / 25.5 V / 30 A | 6S pack |
+| `SCIENCE_BOUNDS` | 21.6 V / 25.5 V / 30 A | 6S pack |
+| `LOGIC_BOUNDS` | 21.6 V / 25.5 V / 30 A | 6S pack, alert-only |
+| `UV_SETTLE_S` | 1.0 s | How long after power-ON before undervoltage is checked |
+| `DEBOUNCE_OC` / `DEBOUNCE_OV` / `DEBOUNCE_UV` | 3 / 3 / 5 | Consecutive 10 Hz samples before a fault (about 0.3 / 0.3 / 0.5 s) |
+| `DEBOUNCE_THERMAL` | 2 | Consecutive 1 Hz temperature samples before an over-temperature fault |
 
-Mirrored to telemetry channels of the same name.
+The bounds in effect are mirrored to `*_POWER_BOUNDS` telemetry. Parameters
+may not persist across a reboot on this board, so the defaults above are what
+runs unless you set them after boot.
 
 ### Telemetry
 
 | Channel | Meaning |
 |---|---|
-| `DRIVETRAIN_FAULT_STATE` / `ARM_FAULT_STATE` / `SCIENCE_FAULT_STATE` / `LOGIC_FAULT_STATE` | `NOMINAL` or `TRIPPED` for that subsystem. Latched: stays `TRIPPED` until the underlying reading(s) return to nominal, independent of whether the subsystem has been manually re-enabled. |
+| `DRIVETRAIN_FAULT_STATE` / `ARM_FAULT_STATE` / `SCIENCE_FAULT_STATE` / `LOGIC_FAULT_STATE` | `NOMINAL`, or `TRIPPED` (latched until `CLEAR_FAULT`). |
+| `DRIVE1_POWER_STATE` … `LOGIC_POWER_STATE` | Evaluation of that sensor's latest reading: `NOMINAL`, `TRIPPED` (out of bounds this sample, before debounce), or `STALE` (read failed, not evaluated). |
+| `*_POWER_BOUNDS` | Bounds in effect per subsystem |
+| `FpReadingsDropped` | Readings lost to a full fpManager queue. Should stay 0. |
 
 ### Events
 
 | Event | When it fires |
 |---|---|
-| `SubsystemFaultShutdown(subsystemName, reason)` | DRIVETRAIN/ARM/SCIENCE tripped a fault and was commanded off. `reason` is one of `UNDERVOLTAGE`, `OVERVOLTAGE`, `OVERCURRENT`, `OVERTEMP`, `SENSOR_FAILURE`. |
-| `SubsystemFaultCleared(subsystemName)` | That subsystem's fault condition cleared (readings back within nominal range). This does **not** mean the subsystem was turned back on — only that FPManager would no longer trip it right now. |
-| `LogicFaultDetected(reason)` | LOGIC tripped a fault. Alert-only — FPManager cannot power-cycle its own flight computer. |
-| `LogicFaultCleared` | LOGIC's fault condition cleared. |
-
-All four events are edge-triggered (fire once per transition, not
-continuously) — same caveat as the E-STOP events above about attaching GDS
-after the transition already happened.
-
-`reason: SENSOR_FAILURE` specifically means the trip was caused by a thermal
-sensor reporting `FAILURE` (not connected/detected) rather than a real
-in-range-but-unsafe temperature — worth distinguishing from `OVERTEMP` when
-deciding whether a subsystem is actually overheating or its sensor is just
-disconnected.
+| `SubsystemFaultShutdown(subsystemName, reason)` | A fault latched and the subsystem was forced OFF. `reason`: `UNDERVOLTAGE`, `OVERVOLTAGE`, `OVERCURRENT`, `OVERTEMP`. |
+| `PowerFaultDetail(sensorId, reason, voltage, current)` | Which sensor caused a power fault, and its reading. |
+| `SubsystemFaultCleared(subsystemName)` | `CLEAR_FAULT` accepted. The subsystem is still OFF until commanded ON. |
+| `LogicFaultDetected(reason)` / `LogicFaultCleared` | The LOGIC equivalents (alert-only). |
+| `FaultClearRejected(subsystemName)` / `FaultClearNoop(subsystemName)` | `CLEAR_FAULT` was refused (still over-temperature), or there was nothing to clear. |
+| `ThermalSensorLost(sensorId)` / `ThermalSensorRecovered(sensorId)` | An MCP9808 became unreadable or readable again. Alert only. |
+| `FpReadingDropped` | The fpManager queue overflowed (once per boot). |
 
 ## Useful non-project commands
 
@@ -235,6 +286,9 @@ disconnected.
 If a command doesn't come back `OK`, the Command History / Events tab will
 show one of:
 
+- **`VALIDATION_ERROR`** on a `SET_*_POWER_STATE ON`: the power-ON was
+  refused on purpose. Check the `PowerOnRejected` event for the reason
+  (E-STOP engaged or unreadable, or a latched fault).
 - **`EXECUTION_ERROR`** — the GPIO write itself failed inside the driver
   (e.g. the pin never became ready). The command was received and
   attempted, but the hardware write did not succeed — do not assume the
@@ -250,17 +304,15 @@ show one of:
 ## Quick Checklist for a Power-On Sequence
 
 1. Send `cmdDisp.CMD_NO_OP`, confirm `NoOpReceived` event — link is alive.
-2. Check `subsystemManager.E_STOP_Status` in the Channels tab — confirm
-   `OFF` before proceeding.
-3. Check `*_FAULT_STATE` on `fpManager` for the subsystem you're about to
-   power — if it's already `TRIPPED`, powering on will very likely trip
-   `SubsystemFaultShutdown` again immediately (FPManager doesn't check
-   "who asked" before re-evaluating a fresh reading).
+2. Release the E-STOP. Confirm `subsystemManager.E_STOP_Status` reads `OFF`.
+3. Check `fpManager.*_FAULT_STATE` for the subsystem. If it's `TRIPPED`, read
+   the `SubsystemFaultShutdown` / `PowerFaultDetail` events, fix the cause,
+   then send `fpManager.CLEAR_FAULT` for it.
 4. Send the relevant `SET_*_POWER_STATE` command with `ON`.
-5. Confirm the matching `SubsystemPowerModeEvent` fired and the matching
-   `*PowerState` telemetry channel reads `ON`.
-6. Watch the Events tab briefly for a `SubsystemFaultShutdown` on that
-   subsystem — a fault-driven shutoff right after a manual power-on means
-   the underlying voltage/current/thermal condition is still bad, not that
-   the command failed.
-7. To power down, repeat step 4 with `OFF`.
+   - `VALIDATION_ERROR` means it was refused: check `PowerOnRejected` for
+     the reason.
+5. Confirm the matching `SubsystemPowerModeEvent` fired and the `*PowerState`
+   channel reads `ON`.
+6. **After an E-STOP press or a fault trip, nothing comes back on by
+   itself.** Repeat from step 2 or 3.
+7. To power down, send `SET_*_POWER_STATE` with `OFF` (always accepted).

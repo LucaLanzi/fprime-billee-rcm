@@ -119,21 +119,21 @@ module rp2350Deployment {
       # timer to drive rate group
       timer.CycleOut -> rateGroupDriver.CycleIn
 
-      # Rate group 1
+      # Rate group 1 (10 Hz): safety-critical polling and the uplink driver
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup1] -> rateGroup1.CycleIn
-      rateGroup1.RateGroupMemberOut[0] -> CdhCore.tlmSend.Run
-      rateGroup1.RateGroupMemberOut[1] -> FileHandling.fileDownlink.Run
-      rateGroup1.RateGroupMemberOut[2] -> systemResources.run
-      rateGroup1.RateGroupMemberOut[3] -> ComCcsds.comQueue.run
-      rateGroup1.RateGroupMemberOut[4] -> ComCcsds.aggregator.timeout
-      rateGroup1.RateGroupMemberOut[5] -> comDriver.schedIn
-      rateGroup1.RateGroupMemberOut[6] -> subsystemManager.run
+      rateGroup1.RateGroupMemberOut[0] -> comDriver.schedIn
+      rateGroup1.RateGroupMemberOut[1] -> subsystemManager.run
+      rateGroup1.RateGroupMemberOut[2] -> inaManager.run
 
-      # Rate group 2
+      # Rate group 2 (1 Hz): telemetry/downlink housekeeping (same rate as before) + thermal
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup2] -> rateGroup2.CycleIn
-      rateGroup2.RateGroupMemberOut[0] -> cmdSeq.schedIn
-      rateGroup2.RateGroupMemberOut[1] -> mcpManager.run
-      rateGroup2.RateGroupMemberOut[2] -> inaManager.run
+      rateGroup2.RateGroupMemberOut[0] -> CdhCore.tlmSend.Run
+      rateGroup2.RateGroupMemberOut[1] -> FileHandling.fileDownlink.Run
+      rateGroup2.RateGroupMemberOut[2] -> systemResources.run
+      rateGroup2.RateGroupMemberOut[3] -> ComCcsds.comQueue.run
+      rateGroup2.RateGroupMemberOut[4] -> ComCcsds.aggregator.timeout
+      rateGroup2.RateGroupMemberOut[5] -> cmdSeq.schedIn
+      rateGroup2.RateGroupMemberOut[6] -> mcpManager.run
 
       # Rate group 3
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup3] -> rateGroup3.CycleIn
@@ -176,8 +176,11 @@ module rp2350Deployment {
       inaManager.powerReadingOut -> fpManager.powerReadingIn
       mcpManager.thermalReadingOut -> fpManager.thermalReadingIn
 
-      # Emergency subsystem shutdown, bypassing the normal ground-command path
-      fpManager.emergencyPowerOffOut -> subsystemManager.emergencyPowerOff
+      # Fault latch: FPManager inhibits/releases subsystems, bypassing the ground-command path
+      fpManager.faultInhibitOut -> subsystemManager.faultInhibitIn
+
+      # Actual power-state changes feed FPManager's undervoltage gating
+      subsystemManager.powerStateOut -> fpManager.powerStateIn
     }
 
   }
