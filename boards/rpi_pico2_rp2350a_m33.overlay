@@ -32,16 +32,17 @@
     };
 
     /*
-     * E-STOP status input, GPIO12. Not active-low in the devicetree sense --
-     * the raw pin level is passed straight through so Fw::Logic::LOW/HIGH in
-     * software matches the physical line: pulled LOW = E-STOP on, HIGH = off.
-     * Internal pull-up so the input reads a defined HIGH (off) if the E-STOP
-     * circuit is ever disconnected rather than floating.
+     * E-STOP status input, GPIO12. Raw level passed straight through:
+     * LOW = E-STOP engaged (stop), HIGH = released (run allowed).
+     * NO internal pull of any kind: the external 10k pulldown (R61) is the
+     * fail-safe, and this same net drives the first input of all 8 hardware
+     * AND gates (U17/U18), so an internal pull would shift the voltage they see.
+     * Never configure this pin as an output.
      */
     billee-gpio-inputs {
         compatible = "gpio-keys";
 
-        estop_status: estop-status { gpios = <&gpio0 12 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; };
+        estop_status: estop-status { gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>; };
     };
 };
 

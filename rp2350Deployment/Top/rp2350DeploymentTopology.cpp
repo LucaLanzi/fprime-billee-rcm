@@ -32,7 +32,7 @@ static const gpio_dt_spec driveEnable6Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_
 static const gpio_dt_spec armEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(arm_enable), gpios);
 static const gpio_dt_spec scienceEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(science_enable), gpios);
 
-// E-STOP status input (active-low: pulled LOW = on, HIGH = off).
+// E-STOP status input: LOW = engaged (stop), HIGH = released. No internal pull (R61 is the pulldown).
 static const gpio_dt_spec eStopStatusPin = GPIO_DT_SPEC_GET(DT_NODELABEL(estop_status), gpios);
 
 /**
@@ -62,8 +62,8 @@ static bool configureGpioOutput(Zephyr::ZephyrGpioDriver& driver, const gpio_dt_
  * \brief configure and open a single subsystem status input
  *
  * Configures the pin as an input and hands it to the ZephyrGpioDriver instance.
- * ZephyrGpioDriver::open() applies GPIO_INPUT itself, so the devicetree's own
- * flags (e.g. the E-STOP line's internal pull-up) are what take effect. A
+ * ZephyrGpioDriver::open() applies GPIO_INPUT itself plus the devicetree's own
+ * flags. The E-STOP line deliberately has no pull flags (external R61 only). A
  * failed GPIO does not abort deployment startup; it is only reported so the
  * remaining configuration can still proceed.
  */
@@ -75,8 +75,9 @@ static bool configureGpioInput(Zephyr::ZephyrGpioDriver& driver, const gpio_dt_s
     return driver.open(pin, Zephyr::ZephyrGpioDriver::IN) == Os::File::Status::OP_OK;
 }
 
-// The reference topology divides the incoming clock signal (1Hz) into sub-signals: 1Hz, 1/2Hz, and 1/4Hz with 0 offset
-Svc::RateGroupDriver::DividerSet rateGroupDivisorsSet{{{1, 0}, {2, 0}, {4, 0}}};
+// The 10 Hz base tick (see Main.cpp) is divided into: rateGroup1 = 10 Hz (E-STOP poll, INA780
+// polling, uplink), rateGroup2 = 1 Hz (telemetry/downlink housekeeping, thermal), rateGroup3 = 0.25 Hz.
+Svc::RateGroupDriver::DividerSet rateGroupDivisorsSet{{{1, 0}, {10, 0}, {40, 0}}};
 
 // Rate groups may supply a context token to each of the attached children whose purpose is set by the project. The
 // reference topology sets each token to zero as these contexts are unused in this project.
