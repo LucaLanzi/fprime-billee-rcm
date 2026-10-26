@@ -248,6 +248,7 @@ Search `fpManager` in the mnemonic list. `*_BOUNDS` are structs with
 | `UV_SETTLE_S` | 1.0 s | How long after power-ON before undervoltage is checked |
 | `DEBOUNCE_OC` / `DEBOUNCE_OV` / `DEBOUNCE_UV` | 3 / 3 / 5 | Consecutive 10 Hz samples before a fault (about 0.3 / 0.3 / 0.5 s) |
 | `DEBOUNCE_THERMAL` | 2 | Consecutive 1 Hz temperature samples before an over-temperature fault |
+| `EXEMPT_DRIVETRAIN_SENSOR` | all `false` | Six booleans, DRIVE1 … DRIVE6. `true` = fpManager ignores that wheel's INA780B entirely, so it can never trip the drivetrain. **An exempt wheel has no voltage or current protection.** Only `DRIVE_TEMP` still covers it. |
 
 The bounds in effect are mirrored to `*_POWER_BOUNDS` telemetry. Parameters
 may not persist across a reboot on this board, so the defaults above are what
@@ -258,8 +259,9 @@ runs unless you set them after boot.
 | Channel | Meaning |
 |---|---|
 | `DRIVETRAIN_FAULT_STATE` / `ARM_FAULT_STATE` / `SCIENCE_FAULT_STATE` / `LOGIC_FAULT_STATE` | `NOMINAL`, or `TRIPPED` (latched until `CLEAR_FAULT`). |
-| `DRIVE1_POWER_STATE` … `LOGIC_POWER_STATE` | Evaluation of that sensor's latest reading: `NOMINAL`, `TRIPPED` (out of bounds this sample, before debounce), or `STALE` (read failed, not evaluated). |
+| `DRIVE1_POWER_STATE` … `LOGIC_POWER_STATE` | Evaluation of that sensor's latest reading: `NOMINAL`, `TRIPPED` (out of bounds this sample, before debounce), `STALE` (read failed, not evaluated), or `EXEMPT` (exempted by `EXEMPT_DRIVETRAIN_SENSOR`, not evaluated). |
 | `*_POWER_BOUNDS` | Bounds in effect per subsystem |
+| `DRIVETRAIN_EXEMPTIONS` | Wheel sensors currently exempted (`EXEMPT_DRIVETRAIN_SENSOR` in effect) |
 | `FpReadingsDropped` | Readings lost to a full fpManager queue. Should stay 0. |
 
 ### Events
@@ -273,6 +275,24 @@ runs unless you set them after boot.
 | `FaultClearRejected(subsystemName)` / `FaultClearNoop(subsystemName)` | `CLEAR_FAULT` was refused (still over-temperature), or there was nothing to clear. |
 | `ThermalSensorLost(sensorId)` / `ThermalSensorRecovered(sensorId)` | An MCP9808 became unreadable or readable again. Alert only. |
 | `FpReadingDropped` | The fpManager queue overflowed (once per boot). |
+| `DrivetrainExemptionsChanged(exempt)` | The set of exempted drivetrain wheel sensors changed. |
+
+### Running with a broken drivetrain power sensor
+
+If one wheel's INA780B is damaged, it can return readings that trip the whole drivetrain
+(often `UNDERVOLTAGE` about 1 s after power-ON). To keep the other five wheels protected
+and still drive:
+
+1. After every boot (parameters may not persist), send
+   `fpManager.EXEMPT_DRIVETRAIN_SENSOR_PRM_SET` with the broken wheel set to `true`.
+   For example, for DRIVE3: `[false, false, true, false, false, false]`.
+2. Check for `DrivetrainExemptionsChanged`, check that `DRIVETRAIN_EXEMPTIONS` matches, and
+   check that the wheel's `DRIVEn_POWER_STATE` reads `EXEMPT`.
+3. If the drivetrain already latched a fault, send `fpManager.CLEAR_FAULT DRIVETRAIN`.
+4. Turn the drivetrain ON as usual.
+
+Send the parameter again with all `false` to restore full checking. Each `PRM_SET` uses one
+of the 8 parameter-database slots for the session.
 
 ## Useful non-project commands
 
