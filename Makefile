@@ -8,7 +8,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-zephyr setup-picotool setup-udev clean-zephyr build-rp2350 gds cpfirm print-banner
+.PHONY: help setup setup-python-dev setup-zephyr zephyr-setup setup-picotool setup-udev clean-zephyr build-rp2350 gds cpfirm print-banner
 
 PICOTOOL_DIR := $(PROJECT_ROOT)/build-tools
 
@@ -19,6 +19,7 @@ help: ## Show available commands
 
 setup: ## Create venv and install project dependencies
 	$(PYTHON) -m venv fprime-venv
+	@$(MAKE) --no-print-directory setup-python-dev
 	git submodule update --init --recursive
 	$(VENV_PYTHON) -m pip install -r requirements.txt
 	grep -q "FPRIME_FRAMEWORK_PATH" fprime-venv/bin/activate || echo 'export FPRIME_FRAMEWORK_PATH=$(PROJECT_ROOT)/lib/fprime' >> fprime-venv/bin/activate
@@ -26,6 +27,19 @@ setup: ## Create venv and install project dependencies
 	-@$(MAKE) --no-print-directory setup-udev || echo "[WARN] udev symlink rule not installed — GDS will fall back to raw /dev/ttyACMx paths, see README"
 	@echo "make setup complete"
 	@$(MAKE) --no-print-directory print-banner
+
+setup-python-dev: ## Install Python C headers (Python.h) for the venv's interpreter
+	@py="$(VENV_PYTHON)"; [ -x "$$py" ] || py="$(PYTHON)"; \
+	inc=$$("$$py" -c 'import sysconfig; print(sysconfig.get_paths()["include"])') || exit 1; \
+	if [ -f "$$inc/Python.h" ]; then \
+		echo "[INFO] Python headers present: $$inc/Python.h"; exit 0; \
+	fi; \
+	ver=$$("$$py" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'); \
+	echo "[INFO] Python.h missing for Python $$ver — installing python$$ver-dev via apt..."; \
+	sudo apt-get install -y "python$$ver-dev" || { \
+		echo "[ERROR] could not install python$$ver-dev — install the Python $$ver development headers manually"; exit 1; }; \
+	[ -f "$$inc/Python.h" ] || { echo "[ERROR] python$$ver-dev installed but $$inc/Python.h still missing"; exit 1; }; \
+	echo "[INFO] Installed Python headers: $$inc/Python.h"
 
 setup-udev: ## Install the udev rule giving this board a stable /dev/ttyBILLEE_RCM symlink
 	@sudo cp udev/99-billee-rcm.rules /etc/udev/rules.d/99-billee-rcm.rules
@@ -62,12 +76,15 @@ setup-picotool: ## Install picotool (apt if available, else build from source)
 	fi
 
 setup-zephyr: ## Install Zephyr dependencies
+	@$(MAKE) --no-print-directory setup-python-dev
 	$(VENV_PYTHON) -m pip install -r requirements-zephyr.txt
 	$(VENV_PYTHON) -m west update
 	$(VENV_PYTHON) -m west packages pip --install
 	$(VENV_PYTHON) -m west sdk install --toolchains arm-zephyr-eabi
-	@echo "make zephyr-setup complete"
+	@echo "make setup-zephyr complete"
 	@$(MAKE) --no-print-directory print-banner
+
+zephyr-setup: setup-zephyr
 
 print-banner: ## Print the project splash screen
 	@echo ""

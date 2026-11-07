@@ -115,13 +115,19 @@ make setup                     # or: make setup PYTHON=python3.12
 ### Zephyr toolchain
 
 ```bash
-make zephyr-setup
+make setup-zephyr
 ```
 
 This installs West in the project venv, runs `west update` against the
 pinned `west.yml`, installs Zephyr's Python packages, and installs the
 `arm-zephyr-eabi` SDK toolchain (validated at 0.17.4). Requires internet
 access; the downloads are substantial.
+
+Both `make setup` and `make setup-zephyr` first run `make setup-python-dev`,
+which installs `python3.X-dev` via apt (prompting for sudo) if the venv
+interpreter's `Python.h` is missing. Some Zephyr Python packages
+(e.g. `ruamel.yaml.clib` on Python 3.14) have no prebuilt wheel and must be
+compiled.
 
 ```bash
 ./fprime-venv/bin/west topdir      # must print the project root
