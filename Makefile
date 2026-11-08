@@ -80,6 +80,10 @@ setup-zephyr: ## Install Zephyr dependencies
 	$(VENV_PYTHON) -m pip install -r requirements-zephyr.txt
 	$(VENV_PYTHON) -m west update
 	$(VENV_PYTHON) -m west packages pip --install
+	# Zephyr's NXP tooling (spsdk) pulls setuptools>=83, which dropped pkg_resources;
+	# fprime-tools 4.2.x still imports it, so restore fprime's pin. spsdk isn't used
+	# for the RP2350 and its resulting pip conflict warning is harmless.
+	$(VENV_PYTHON) -m pip install "setuptools==78.1.1"
 	$(VENV_PYTHON) -m west sdk install --toolchains arm-zephyr-eabi
 	@echo "make setup-zephyr complete"
 	@$(MAKE) --no-print-directory print-banner
