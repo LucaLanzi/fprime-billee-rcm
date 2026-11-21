@@ -8,7 +8,8 @@ skip to [Sending a Command](#sending-a-command) or the component references.
 
 **Components covered:** `subsystemManager` (power control + E-STOP),
 `mcpManager` (thermal sensing), `inaManager` (power/current sensing),
-`fpManager` (fault protection).
+`fpManager` (fault protection), plus [command sequences](#command-sequences-cmdseq)
+and [saving parameters](#saving-parameters-prmdb).
 
 ## Connecting
 
@@ -223,10 +224,9 @@ Software fault protection layered on the sensors above. Full source:
 - **Sensor loss is alert-only:** an unreadable INA780 or MCP9808 raises an
   event but never trips anything.
 
-**With 30 A current limits, the drivetrain temperature sensor is the main
-protection for the drive power copper.** The limits are set high on purpose
-for initial testing. The drive pour heats up long before 30 A per wheel, so
-watch `DRIVE_TEMP`.
+**With 100 A current limits (and 35 V overvoltage), the temperature sensors are
+the main protection for the power copper.** The limits are set loose on purpose.
+The drive pour heats up long before 100 A per wheel, so watch `DRIVE_TEMP`.
 
 ### Commands
 
@@ -241,17 +241,20 @@ Search `fpManager` in the mnemonic list. `*_BOUNDS` are structs with
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `DRIVETRAIN_BOUNDS` | 13.6 V / 17.2 V / 30 A | 4S pack. The current limit applies to **each wheel** sensor. |
-| `ARM_BOUNDS` | 21.6 V / 25.5 V / 30 A | 6S pack |
-| `SCIENCE_BOUNDS` | 21.6 V / 25.5 V / 30 A | 6S pack |
-| `LOGIC_BOUNDS` | 21.6 V / 25.5 V / 30 A | 6S pack, alert-only |
+| `DRIVETRAIN_BOUNDS` | 13.6 V / 35 V / 100 A | 4S pack. The current limit applies to **each wheel** sensor. |
+| `ARM_BOUNDS` | 20.4 V / 35 V / 100 A | 6S pack |
+| `SCIENCE_BOUNDS` | 20.4 V / 35 V / 100 A | 6S pack |
+| `LOGIC_BOUNDS` | 20.4 V / 35 V / 100 A | 6S pack, alert-only |
+| `EXEMPT_DRIVETRAIN_SENSOR` | all `false` | One field per wheel, `DRIVE1`…`DRIVE6`. `true` = that wheel's INA780 is ignored entirely (no OC/OV/UV); use it for a broken sensor. |
 | `UV_SETTLE_S` | 1.0 s | How long after power-ON before undervoltage is checked |
 | `DEBOUNCE_OC` / `DEBOUNCE_OV` / `DEBOUNCE_UV` | 3 / 3 / 5 | Consecutive 10 Hz samples before a fault (about 0.3 / 0.3 / 0.5 s) |
 | `DEBOUNCE_THERMAL` | 2 | Consecutive 1 Hz temperature samples before an over-temperature fault |
 
-The bounds in effect are mirrored to `*_POWER_BOUNDS` telemetry. Parameters
-may not persist across a reboot on this board, so the defaults above are what
-runs unless you set them after boot.
+The bounds in effect are mirrored to `*_POWER_BOUNDS` telemetry. A `*_PRM_SET`
+takes effect immediately but is lost at reboot unless you save it (see
+[Saving parameters](#saving-parameters-prmdb)). **The defaults above only apply
+while no saved value exists:** once a value is saved, it is what runs at every
+boot.
 
 ### Telemetry
 
@@ -280,6 +283,76 @@ runs unless you set them after boot.
 |---|---|---|---|
 | `cmdDisp.CMD_NO_OP` | 0 | none | No-op. Good first command to send after connecting — confirms the uplink and command dispatcher are alive (look for the `NoOpReceived` event). |
 | `cmdDisp.CMD_NO_OP_STRING` | 1 | `arg1: string` | Same as above, but echoes your string back in the `NoOpStringReceived` event — useful for confirming argument encoding round-trips correctly. |
+
+## Command sequences (`cmdSeq`)
+
+A sequence is a text file of commands that the board runs by itself, one after
+another. Sequences live on the board's flash filesystem in `/lfs/seq/` and
+survive reboots and reflashing. Ready-made ones are in `../Sequences/` (see its
+`README.md`).
+
+### Writing one
+
+One command per line, `;` starts a comment. Each line is a time, the full
+mnemonic, then the arguments:
+
+```
+; Clear the drivetrain fault latch, then power it on
+R00:00:00 rp2350Deployment.fpManager.CLEAR_FAULT DRIVETRAIN
+R00:00:00 rp2350Deployment.subsystemManager.SET_DRIVETRAIN_POWER_STATE ON
+R00:00:05 rp2350Deployment.subsystemManager.SET_DRIVETRAIN_POWER_STATE OFF
+```
+
+- **`R hh:mm:ss` is the delay after the previous command finished.**
+  `R00:00:00` sends the next command the moment the previous one answers, so a
+  sequence of `R00:00:00` lines runs in a few milliseconds. Longer delays are
+  timed to the nearest 100 ms.
+- Commands always run one at a time, in order. **A command that fails stops the
+  sequence there** (`CS_CommandError`): for example a power-ON refused because
+  the E-STOP is engaged. Sequenced commands go through exactly the same E-STOP
+  and fault checks as commands from the GDS.
+- Struct arguments (`*_BOUNDS`, `EXEMPT_DRIVETRAIN_SENSOR`) are written as
+  JSON in single quotes:
+  `'{"vbusFaultLow": 13.6, "vbusFaultHigh": 35.0, "currentFaultHigh": 100.0}'`.
+- A command that gets no answer within 60 s fails the sequence.
+- A compiled sequence must fit in 5 KiB, which is roughly 150 commands.
+
+### Running one
+
+1. **Upload:** in the GDS **Sequence** tab, write or load the sequence and press
+   **Uplink**. The GDS compiles it and sends it to `/lfs/seq/<name>.bin`. Wait for
+   the `fileUplink.FileReceived` event. You can instead compile with
+   `make sequences` and upload `build-artifacts/sequences/<name>.bin` to
+   `/lfs/seq/` from the **Uplink** tab.
+2. **Check:** `cmdSeq.CS_VALIDATE /lfs/seq/<name>.bin`.
+3. **Run:** `cmdSeq.CS_RUN /lfs/seq/<name>.bin BLOCK`. With `BLOCK`, the run
+   command itself answers when the sequence ends (`CS_SequenceComplete`), or
+   with an error if any command in it failed.
+4. **Stop:** `cmdSeq.CS_CANCEL` stops a running sequence. It does not undo
+   commands that already ran: turn subsystems off yourself.
+
+**Before re-uploading a changed sequence under the same name, delete the old
+file:** `fileManager.RemoveFile /lfs/seq/<name>.bin false`. File uplink
+overwrites without truncating, so a shorter new file would keep the old one's
+tail and fail `CS_VALIDATE`.
+
+To see what's on the board: `fileManager.ListDirectory /lfs/seq`.
+`fileManager.FileSize` checks a single file.
+
+## Saving parameters (`prmDb`)
+
+A `*_PRM_SET` command changes a parameter until the next reboot. To keep it:
+
+1. Set it (e.g. `fpManager.DRIVETRAIN_BOUNDS_PRM_SET`).
+2. `fpManager.<PARAM>_PRM_SAVE` stages the value in the parameter database.
+3. `prmDb.PRM_SAVE_FILE` writes the whole database to `/lfs/PrmDb.dat`.
+
+At every boot the board loads `/lfs/PrmDb.dat` (`PrmFileLoadComplete` event),
+and saved values replace the defaults. That includes
+`EXEMPT_DRIVETRAIN_SENSOR`, so a wheel you exempted and saved stays exempt
+until you set it back and save again. On a board that has never saved, the
+file doesn't exist yet: the load reports an error event and every parameter
+runs at its default, which is expected.
 
 ## Command Responses
 

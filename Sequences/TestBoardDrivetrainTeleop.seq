@@ -1,0 +1,17 @@
+; TestBoardDrivetrainTeleop: test-board bring-up.
+;   1. Clear the DRIVETRAIN and SCIENCE fault latches (the E-STOP itself is hardware: release
+;      the button; software cannot clear it).
+;   2. Exempt wheel 4's INA780B from fault protection (DRIVE4 only; the others stay checked).
+;   3. Give SCIENCE the drivetrain's bounds: 13.6 V low, 35 V high, 100 A.
+;   4. Power on the drivetrain, then science.
+;
+; Every command is R00:00:00: each one goes out the moment the previous one answers, so the
+; whole sequence runs in milliseconds. Any command that fails stops the sequence there.
+; The parameter changes are runtime only (not PRM_SAVE_FILE'd): a reboot restores the saved or
+; default values.
+R00:00:00 rp2350Deployment.fpManager.CLEAR_FAULT DRIVETRAIN
+R00:00:00 rp2350Deployment.fpManager.CLEAR_FAULT SCIENCE
+R00:00:00 rp2350Deployment.fpManager.EXEMPT_DRIVETRAIN_SENSOR_PRM_SET '{"DRIVE1": false, "DRIVE2": false, "DRIVE3": false, "DRIVE4": true, "DRIVE5": false, "DRIVE6": false}'
+R00:00:00 rp2350Deployment.fpManager.SCIENCE_BOUNDS_PRM_SET '{"vbusFaultLow": 13.6, "vbusFaultHigh": 35.0, "currentFaultHigh": 100.0}'
+R00:00:00 rp2350Deployment.subsystemManager.SET_DRIVETRAIN_POWER_STATE ON
+R00:00:00 rp2350Deployment.subsystemManager.SET_SCIENCE_POWER_STATE ON

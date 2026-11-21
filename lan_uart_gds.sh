@@ -10,6 +10,9 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 UART_DEVICE="${UART_DEVICE:-/dev/ttyBILLEE_RCM}"
 DICTIONARY_PATH="${DICTIONARY_PATH:-${PROJECT_ROOT}/build-artifacts/zephyr/fprime-zephyr-deployment/dict/rp2350DeploymentTopologyDictionary.json}"
 GDS_BIN="${PROJECT_ROOT}/fprime-venv/bin/fprime-gds"
+# Where the GDS Sequence tab uplinks compiled sequences: the board's LittleFS mount (/lfs).
+# The GDS default (/seq) does not exist on this board.
+REMOTE_SEQUENCE_DIRECTORY="${REMOTE_SEQUENCE_DIRECTORY:-/lfs/seq}"
 GDS_FLASK_PORT="${GDS_FLASK_PORT:-5000}"
 # Distinct from fprime-arduino-billee-scm's own IPC socket pair (-scm suffix)
 # so the two deployments' GDS instances can run side by side on the same
@@ -75,4 +78,5 @@ exec "${GDS_BIN}" \
   --gui-port "${GDS_FLASK_PORT}" \
   --zmq-transport "${ZMQ_SERVER_IN}" "${ZMQ_SERVER_OUT}" \
   --disable-data-logging \
+  --remote-sequence-directory "${REMOTE_SEQUENCE_DIRECTORY}" \
   "$@"

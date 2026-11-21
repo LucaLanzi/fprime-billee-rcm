@@ -31,7 +31,12 @@ module ComCcsdsConfig {
         # allocation had nothing left to work with. Halving once (events=8, tlm=16) only
         # left cmdSeq's allocation succeeding by ~300 bytes -- too marginal to survive
         # steady-state runtime allocations. Halved again for real headroom.
-        constant events = 4
+        # events raised back to 20 (2026-11-21): a running sequence emits ~3 events per
+        # command within milliseconds, and at 4 a 6-command sequence overflowed this queue
+        # and dropped its events (seen on hardware). Each slot is one Fw::ComBuffer (~184 B
+        # at FW_COM_BUFFER_MAX_SIZE = 160, not the ~0.5 KiB it was when the numbers above
+        # were measured), so +16 slots is ~3 KiB of heap.
+        constant events = 20
         constant tlm = 8
         constant file = 4
     }

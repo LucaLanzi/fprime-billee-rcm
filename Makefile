@@ -8,7 +8,7 @@ export PATH := $(PROJECT_ROOT)/fprime-venv/bin:$(PATH)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup setup-python-dev setup-zephyr zephyr-setup setup-picotool setup-udev clean-zephyr build-rp2350 gds cpfirm print-banner
+.PHONY: help setup setup-python-dev setup-zephyr zephyr-setup setup-picotool setup-udev clean-zephyr build-rp2350 sequences gds cpfirm print-banner
 
 PICOTOOL_DIR := $(PROJECT_ROOT)/build-tools
 
@@ -111,6 +111,18 @@ build-rp2350: clean-zephyr ## Build the RP2350 Zephyr target
 	$(VENV_FPRIME_UTIL) generate -DBOARD=rpi_pico2/rp2350a/m33 zephyr -f
 	$(VENV_FPRIME_UTIL) build zephyr
 	@echo "make build-rp2350 complete"
+
+SEQ_DICTIONARY ?= $(PROJECT_ROOT)/build-artifacts/zephyr/fprime-zephyr-deployment/dict/rp2350DeploymentTopologyDictionary.json
+SEQ_OUT_DIR := $(PROJECT_ROOT)/build-artifacts/sequences
+
+sequences: ## Compile Sequences/*.seq against the built dictionary into build-artifacts/sequences/*.bin
+	@[ -f "$(SEQ_DICTIONARY)" ] || { echo "[ERROR] No dictionary at $(SEQ_DICTIONARY). Run 'make build-rp2350' first."; exit 1; }
+	@mkdir -p "$(SEQ_OUT_DIR)"
+	@for seq in $(PROJECT_ROOT)/Sequences/*.seq; do \
+		name=$$(basename "$$seq" .seq); \
+		$(PROJECT_ROOT)/fprime-venv/bin/fprime-seqgen --dictionary "$(SEQ_DICTIONARY)" "$$seq" "$(SEQ_OUT_DIR)/$$name.bin" || exit 1; \
+		echo "[OK] $$name.seq -> build-artifacts/sequences/$$name.bin"; \
+	done
 
 USBIPD_BUSID ?= 2-4
 MAC_UART_DEVICE ?= /dev/tty.usbmodem2101

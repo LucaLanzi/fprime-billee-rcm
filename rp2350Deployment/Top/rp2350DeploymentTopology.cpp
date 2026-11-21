@@ -10,6 +10,7 @@
 
 // Necessary project-specified types
 #include <Fw/Types/MallocAllocator.hpp>
+#include <Os/FileSystem.hpp>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
@@ -20,6 +21,14 @@ namespace rp2350Deployment {
 
 // Instantiate a malloc allocator for cmdSeq buffer allocation
 Fw::MallocAllocator mallocator;
+
+// LittleFS mount point (fstab in boards/rpi_pico2_rp2350a_m33.overlay). Zephyr has no working
+// directory, so every F Prime file path must be absolute under it.
+static constexpr const char* SEQUENCE_DIRECTORY = "/lfs/seq";  // GDS --remote-sequence-directory
+static constexpr const char* PARAMETER_FILE = "/lfs/PrmDb.dat";
+// Fail a sequenced command that goes unanswered this long. RCM commands answer immediately,
+// so this is only a backstop against a lost response.
+static constexpr U32 SEQUENCE_COMMAND_TIMEOUT_S = 60;
 
 // Subsystem power-enable outputs (billee-gpio-outputs container in the board overlay).
 // All active-high, all must come up inactive/low.
@@ -103,6 +112,16 @@ void configureTopology() {
 
     // Command sequencer needs to allocate memory to hold contents of command sequences
     cmdSeq.allocateBuffer(0, mallocator, 5 * 1024);
+    cmdSeq.setTimeout(SEQUENCE_COMMAND_TIMEOUT_S);
+
+    // Sequences are uplinked here. Created on every boot; already existing is fine, and if
+    // /lfs failed to mount this fails too and the cmdSeq/fileUplink errors will say so.
+    (void)Os::FileSystem::createDirectory(SEQUENCE_DIRECTORY);
+
+    // The FileHandling subtopology configures prmDb with a relative "PrmDb.dat", which Zephyr
+    // can't resolve. Point it at /lfs. This runs after configComponents() and before
+    // loadParameters(), so the saved parameters load from here at boot.
+    FileHandling::prmDb.configure(PARAMETER_FILE);
 
     // Use the UART selected as Zephyr's console for F Prime communications.
     comDriver.configure(DEVICE_DT_GET(DT_CHOSEN(zephyr_console)), 115200);

@@ -1,0 +1,8 @@
+; Drivetrain-Teleop: clear any latched drivetrain fault, then power the drivetrain on.
+;
+; Every command is R00:00:00: each one goes out the moment the previous one answers, so the
+; whole sequence runs in milliseconds. Any command that fails stops the sequence there.
+; The ON step is refused (VALIDATION_ERROR, PowerOnRejected event) while the E-STOP is engaged.
+; CLEAR_FAULT is refused (EXECUTION_ERROR) while a drive over-temperature persists.
+R00:00:00 rp2350Deployment.fpManager.CLEAR_FAULT DRIVETRAIN
+R00:00:00 rp2350Deployment.subsystemManager.SET_DRIVETRAIN_POWER_STATE ON
