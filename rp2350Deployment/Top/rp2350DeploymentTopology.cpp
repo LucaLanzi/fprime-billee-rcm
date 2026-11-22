@@ -10,6 +10,7 @@
 
 // Necessary project-specified types
 #include <Fw/Types/MallocAllocator.hpp>
+#include <Os/FileSystem.hpp>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
@@ -20,6 +21,14 @@ namespace rp2350Deployment {
 
 // Instantiate a malloc allocator for cmdSeq buffer allocation
 Fw::MallocAllocator mallocator;
+
+// LittleFS mount point (fstab in boards/rpi_pico2_rp2350a_m33.overlay). Zephyr has no working
+// directory, so every F Prime file path must be absolute under it.
+static constexpr const char* SEQUENCE_DIRECTORY = "/lfs/seq";  // GDS --remote-sequence-directory
+static constexpr const char* PARAMETER_FILE = "/lfs/PrmDb.dat";
+// Fail a sequenced command that goes unanswered this long. RCM commands answer immediately,
+// so this is only a backstop against a lost response.
+static constexpr U32 SEQUENCE_COMMAND_TIMEOUT_S = 60;
 
 // Subsystem power-enable outputs (billee-gpio-outputs container in the board overlay).
 // All active-high, all must come up inactive/low.
@@ -32,7 +41,7 @@ static const gpio_dt_spec driveEnable6Pin = GPIO_DT_SPEC_GET(DT_NODELABEL(drive_
 static const gpio_dt_spec armEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(arm_enable), gpios);
 static const gpio_dt_spec scienceEnablePin = GPIO_DT_SPEC_GET(DT_NODELABEL(science_enable), gpios);
 
-// E-STOP status input (active-low: pulled LOW = on, HIGH = off).
+// E-STOP status input: LOW = engaged (stop), HIGH = released. No internal pull (R61 is the pulldown).
 static const gpio_dt_spec eStopStatusPin = GPIO_DT_SPEC_GET(DT_NODELABEL(estop_status), gpios);
 
 /**
@@ -62,8 +71,8 @@ static bool configureGpioOutput(Zephyr::ZephyrGpioDriver& driver, const gpio_dt_
  * \brief configure and open a single subsystem status input
  *
  * Configures the pin as an input and hands it to the ZephyrGpioDriver instance.
- * ZephyrGpioDriver::open() applies GPIO_INPUT itself, so the devicetree's own
- * flags (e.g. the E-STOP line's internal pull-up) are what take effect. A
+ * ZephyrGpioDriver::open() applies GPIO_INPUT itself plus the devicetree's own
+ * flags. The E-STOP line deliberately has no pull flags (external R61 only). A
  * failed GPIO does not abort deployment startup; it is only reported so the
  * remaining configuration can still proceed.
  */
@@ -75,8 +84,9 @@ static bool configureGpioInput(Zephyr::ZephyrGpioDriver& driver, const gpio_dt_s
     return driver.open(pin, Zephyr::ZephyrGpioDriver::IN) == Os::File::Status::OP_OK;
 }
 
-// The reference topology divides the incoming clock signal (1Hz) into sub-signals: 1Hz, 1/2Hz, and 1/4Hz with 0 offset
-Svc::RateGroupDriver::DividerSet rateGroupDivisorsSet{{{1, 0}, {2, 0}, {4, 0}}};
+// The 10 Hz base tick (see Main.cpp) is divided into: rateGroup1 = 10 Hz (E-STOP poll, INA780
+// polling, uplink), rateGroup2 = 1 Hz (telemetry/downlink housekeeping, thermal), rateGroup3 = 0.25 Hz.
+Svc::RateGroupDriver::DividerSet rateGroupDivisorsSet{{{1, 0}, {10, 0}, {40, 0}}};
 
 // Rate groups may supply a context token to each of the attached children whose purpose is set by the project. The
 // reference topology sets each token to zero as these contexts are unused in this project.
@@ -102,6 +112,16 @@ void configureTopology() {
 
     // Command sequencer needs to allocate memory to hold contents of command sequences
     cmdSeq.allocateBuffer(0, mallocator, 5 * 1024);
+    cmdSeq.setTimeout(SEQUENCE_COMMAND_TIMEOUT_S);
+
+    // Sequences are uplinked here. Created on every boot; already existing is fine, and if
+    // /lfs failed to mount this fails too and the cmdSeq/fileUplink errors will say so.
+    (void)Os::FileSystem::createDirectory(SEQUENCE_DIRECTORY);
+
+    // The FileHandling subtopology configures prmDb with a relative "PrmDb.dat", which Zephyr
+    // can't resolve. Point it at /lfs. This runs after configComponents() and before
+    // loadParameters(), so the saved parameters load from here at boot.
+    FileHandling::prmDb.configure(PARAMETER_FILE);
 
     // Use the UART selected as Zephyr's console for F Prime communications.
     comDriver.configure(DEVICE_DT_GET(DT_CHOSEN(zephyr_console)), 115200);

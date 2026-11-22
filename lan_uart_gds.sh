@@ -2,10 +2,23 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-UART_DEVICE="${UART_DEVICE:-/dev/ttyACM0}"
+# /dev/ttyBILLEE_RCM is a udev-created symlink (udev/99-billee-rcm.rules,
+# installed by `make setup`/`make setup-udev`) that always resolves to this
+# board regardless of which raw /dev/ttyACMx node the kernel assigns it --
+# that numbering isn't stable across a reboot when this deployment and
+# fprime-arduino-billee-scm's are both attached to the same host.
+UART_DEVICE="${UART_DEVICE:-/dev/ttyBILLEE_RCM}"
 DICTIONARY_PATH="${DICTIONARY_PATH:-${PROJECT_ROOT}/build-artifacts/zephyr/fprime-zephyr-deployment/dict/rp2350DeploymentTopologyDictionary.json}"
 GDS_BIN="${PROJECT_ROOT}/fprime-venv/bin/fprime-gds"
+# Where the GDS Sequence tab uplinks compiled sequences: the board's LittleFS mount (/lfs).
+# The GDS default (/seq) does not exist on this board.
+REMOTE_SEQUENCE_DIRECTORY="${REMOTE_SEQUENCE_DIRECTORY:-/lfs/seq}"
 GDS_FLASK_PORT="${GDS_FLASK_PORT:-5000}"
+# Distinct from fprime-arduino-billee-scm's own IPC socket pair (-scm suffix)
+# so the two deployments' GDS instances can run side by side on the same
+# host without sharing an internal ZMQ bridge socket.
+ZMQ_SERVER_IN="${ZMQ_SERVER_IN:-ipc:///tmp/fprime-server-in-rcm}"
+ZMQ_SERVER_OUT="${ZMQ_SERVER_OUT:-ipc:///tmp/fprime-server-out-rcm}"
 
 # Killing a previous `make gds` session by its top-level PID alone (rather than its whole
 # process group -- e.g. a plain `kill -9 <pid>` instead of Ctrl+C in the owning terminal)
@@ -24,11 +37,15 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 if command -v pkill >/dev/null 2>&1; then
     pkill -9 -f "flask run --host .* --port ${GDS_FLASK_PORT}" 2>/dev/null || true
-    pkill -9 -f "fprime_gds.executables.comm" 2>/dev/null || true
-    pkill -9 -f "fprime_gds.executables.apps.CustomDataHandlers" 2>/dev/null || true
+    # Scoped to this repo's own venv path -- an unscoped match here would also
+    # kill fprime-arduino-billee-scm's live comm/CustomDataHandlers processes
+    # when both deployments run on the same host (confirmed happening in
+    # practice: starting one killed the other's already-running comm process).
+    pkill -9 -f "${PROJECT_ROOT}/fprime-venv/.*fprime_gds.executables.comm" 2>/dev/null || true
+    pkill -9 -f "${PROJECT_ROOT}/fprime-venv/.*fprime_gds.executables.apps.CustomDataHandlers" 2>/dev/null || true
     pkill -9 -f "${GDS_BIN}" 2>/dev/null || true
 fi
-rm -f /tmp/fprime-server-in /tmp/fprime-server-out
+rm -f /tmp/fprime-server-in-rcm /tmp/fprime-server-out-rcm
 
 if [[ ! -x "${GDS_BIN}" ]]; then
     echo "F Prime GDS was not found at ${GDS_BIN}. Run 'make setup' first." >&2
@@ -46,6 +63,11 @@ if [[ ! -c "${UART_DEVICE}" ]]; then
     exit 1
 fi
 
+# --disable-data-logging: GDS's DataLogger appends every telemetry item to channel.log (and all raw bytes to
+# recv.bin) with no rotation, flushed per item. On this always-on service that grows without bound and, together
+# with the SCM GDS on the same Jetson, filled its disk on 2026-09-24. The flag turns off the whole DataLogger
+# (channel.log, recv.bin, sent.bin, event.log, command.log); GDS's own process logs are unaffected. Drop the flag
+# to get the data logs back while debugging.
 exec "${GDS_BIN}" \
     --no-app \
   --dictionary "${DICTIONARY_PATH}" \
@@ -54,4 +76,7 @@ exec "${GDS_BIN}" \
   --uart-baud 115200 \
   --gui-addr 0.0.0.0 \
   --gui-port "${GDS_FLASK_PORT}" \
+  --zmq-transport "${ZMQ_SERVER_IN}" "${ZMQ_SERVER_OUT}" \
+  --disable-data-logging \
+  --remote-sequence-directory "${REMOTE_SEQUENCE_DIRECTORY}" \
   "$@"

@@ -70,6 +70,9 @@ module rp2350Deployment {
   # the shared arm/science sensor counted twice). Even with `drop` set on the receiving ports
   # (see FPManager.fpp) as a hard backstop, size the queue to comfortably hold a full burst
   # from both managers so readings aren't routinely dropped in normal operation.
+  # State-machine signals and power-state changes share this queue too. Kept at 16 (heap is
+  # tight): every FPManager input drops or hooks on overflow instead of asserting, and a dropped
+  # fault signal is re-sent on the next out-of-bounds sample. Watch FpReadingsDropped.
   instance fpManager: Billee.FPManager base id 0x10024000 \
     queue size 16 \
     stack size Default.STACK_SIZE \

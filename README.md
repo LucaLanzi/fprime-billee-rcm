@@ -115,13 +115,19 @@ make setup                     # or: make setup PYTHON=python3.12
 ### Zephyr toolchain
 
 ```bash
-make zephyr-setup
+make setup-zephyr
 ```
 
 This installs West in the project venv, runs `west update` against the
 pinned `west.yml`, installs Zephyr's Python packages, and installs the
 `arm-zephyr-eabi` SDK toolchain (validated at 0.17.4). Requires internet
 access; the downloads are substantial.
+
+Both `make setup` and `make setup-zephyr` first run `make setup-python-dev`,
+which installs `python3.X-dev` via apt (prompting for sudo) if the venv
+interpreter's `Python.h` is missing. Some Zephyr Python packages
+(e.g. `ruamel.yaml.clib` on Python 3.14) have no prebuilt wheel and must be
+compiled.
 
 ```bash
 ./fprime-venv/bin/west topdir      # must print the project root
@@ -223,6 +229,33 @@ See [Troubleshooting](#troubleshooting) below, and
 [F´ / fprime-zephyr / Zephyr compatibility layer](#f--fprime-zephyr--zephyr-compatibility-layer)
 for the compatibility-layer details.
 
+## Flash and run — Linux (Jetson / native)
+
+On the Jetson there is no desktop auto-mounter, and Ubuntu 24.04's
+`chromium-browser`-style snap situation also affects `picotool` (not in apt).
+`make cpfirm` handles all of it:
+
+1. One-time: `make setup-picotool` — installs `picotool` from apt, or builds it
+   from source into `build-tools/` if apt has no package (it doesn't on L4T),
+   plus a udev rule so it runs without `sudo`.
+2. Put the board in BOOTSEL:
+   - hold **BOOTSEL**, tap RESET / replug USB, release; **or**
+   - `make bootsel` (reboots a *running* board into BOOTSEL via picotool — needs
+     firmware support; the button always works).
+3. Flash:
+   ```bash
+   make cpfirm
+   ```
+   `cpfirm` tries, in order: a mounted `RP2350`/`RPI-RP2` volume
+   (`$LINUX_BOOTSEL_VOLUME`); an unmounted `RP2350`-labelled block device, which
+   it `sudo mount`s, copies to, and unmounts; then `picotool load -x -f`. It
+   errors clearly if the board is still running firmware (`/dev/ttyACM0`
+   present) rather than in BOOTSEL.
+4. The board reboots into the new firmware as `/dev/ttyACM0`. Start GDS with
+   `make gds` (add `UART_DEVICE=/dev/ttyACM1` if it enumerates elsewhere), or
+   run it as an always-on service — see
+   [Run GDS as a service](#run-gds-as-a-service-headless-jetson).
+
 ## Start GDS
 
 Covered inline above for each platform (`make gds mac` / `make gds wsl` /
@@ -232,12 +265,108 @@ character device, then starts GDS with no local deployment executable, the
 generated dictionary, UART communication, and `space-packet-space-data-link`
 CCSDS framing.
 
+`lan_uart_gds.sh` is the same launcher but binds the web UI to `0.0.0.0` (LAN
+access), for a headless Jetson you reach from another machine.
+
+## Run GDS as a service (headless Jetson)
+
+`make install-gds-service` installs a systemd service that runs
+`lan_uart_gds.sh` at every boot inside a **detached `screen` session**, so the
+GDS comes up unattended and you can attach to it live over SSH.
+
+```bash
+make install-gds-service     # sudo; run from your normal account (needs $SUDO_USER)
+```
+
+What it does ([`install-lan-gds-service.sh`](install-lan-gds-service.sh)):
+
+- `apt-get install screen` if it isn't already present.
+- Writes `/etc/systemd/system/billee-lan-gds.service`, running
+  `screen -DmS billee-lan-gds gds-run-loop.sh` as your user, in the `dialout`
+  group, after `network-online.target`, then `systemctl enable --now`.
+- [`gds-run-loop.sh`](gds-run-loop.sh) runs `lan_uart_gds.sh` in a loop: on any
+  exit — board unplugged, missing build, crash — it waits **10 s**
+  (`GDS_RETRY_SECONDS`) and starts it again. `Restart=always` /
+  `RestartSec=10` in the unit is a backstop if `screen` itself dies.
+
+Managing it:
+
+| Command | Purpose |
+| --- | --- |
+| `make gds-attach` | Attach to the live `screen` session (`Ctrl-A` then `D` to detach) |
+| `make gds-service-status` | `systemctl status` + recent `journalctl` lines |
+| `sudo systemctl stop billee-lan-gds` | Stop it (stays enabled for next boot) |
+| `make uninstall-gds-service` | Disable and remove the unit |
+
+Run `screen -r billee-lan-gds` as the same user the service runs as.
+
 ## Operating the rover
 
 Once GDS is connected and showing live telemetry, see
 **[`docs/OPERATOR_MANUAL.md`](docs/OPERATOR_MANUAL.md)** for the full command
 reference: subsystem power control, E-STOP behavior, thermal/power
-telemetry, and the FPManager fault-protection state machine.
+telemetry, the FPManager fault-protection state machine, command sequences and
+saving parameters.
+
+## Writing and running your own sequence
+
+A sequence is a text file of commands that the board runs by itself, in order.
+This example only uses no-op commands, so it's safe on any board, including a
+bare RP2350 with nothing attached.
+
+**1. Write it.** Create `Sequences/hello.seq`:
+
+```
+; hello.seq: confirms the sequencer works. Safe on any board.
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING "hello from a sequence"
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP
+```
+
+- Each line is a time, a full command mnemonic (as the GDS **Commanding** tab
+  lists it), then its arguments. `;` starts a comment.
+- `R00:00:00` means "run as soon as the previous command has answered", so
+  this whole sequence takes milliseconds. Use e.g. `R00:00:02` to wait 2 s
+  after the previous command.
+- Strings go in double quotes. Struct arguments such as `fpManager.*_BOUNDS`
+  are single-quoted JSON:
+  `'{"vbusFaultLow": 13.6, "vbusFaultHigh": 35.0, "currentFaultHigh": 100.0}'`.
+- Commands run one at a time, and a command that fails stops the sequence.
+
+**2. Check it.** Run `make sequences`. This compiles every `Sequences/*.seq`
+against the built dictionary into `build-artifacts/sequences/<name>.bin`. A
+misspelled mnemonic or a bad argument fails here, not on the board.
+
+**3. Upload it.** The GDS must be started with this repo's `make gds`,
+`uart_gds.sh` or the `billee-lan-gds` service: those pass
+`--remote-sequence-directory /lfs/seq`.
+- In the GDS **Sequence** tab, paste the text, name it `hello.seq`, and press
+  **Uplink**. The GDS compiles it and sends it to `/lfs/seq/hello.bin`.
+- Or, in the **Uplink** tab, send `build-artifacts/sequences/hello.bin` to
+  destination `/lfs/seq`.
+
+Wait for the `FileHandling.fileUplink.FileReceived` event.
+
+**4. Run it.** In the **Commanding** tab:
+1. `rp2350Deployment.cmdSeq.CS_VALIDATE` with `fileName = /lfs/seq/hello.bin`.
+2. `rp2350Deployment.cmdSeq.CS_RUN` with `fileName = /lfs/seq/hello.bin`,
+   `block = BLOCK`.
+
+The **Events** tab should show `CS_SequenceLoaded`, then two `NoOpReceived`
+and one `NoOpStringReceived ("hello from a sequence")`, then
+`CS_SequenceComplete`. `cmdSeq.CS_CANCEL` stops a running sequence.
+
+**5. Change it later.** Delete the old file first
+(`FileHandling.fileManager.RemoveFile` with `fileName = /lfs/seq/hello.bin`,
+`ignoreErrors = false`), then upload again. File uplink doesn't truncate, so a
+shorter new version would otherwise keep the old file's tail. Uploaded
+sequences stay on the board across reboots and reflashes.
+`FileHandling.fileManager.ListDirectory /lfs/seq` lists what's there.
+
+Ready-made sequences (`Drivetrain-Teleop`, `TestBoardDrivetrainTeleop`) are in
+[`Sequences/`](Sequences/README.md). The full reference is in the operator
+manual's [Command sequences](docs/OPERATOR_MANUAL.md#command-sequences-cmdseq)
+section.
 
 ## Acceptance checklist
 
@@ -386,6 +515,33 @@ Read it top to bottom before adding a new active component.
   [Current tuned values](#current-tuned-values-reference) for the specifics.
   If the topology grows, recalculate these; they're capacity limits, not
   feature exclusions.
+- **On-board filesystem: LittleFS at `/lfs`.** The last 1 MB of the 4 MB
+  QSPI flash (`storage_partition` at offset `0x300000`, in the board overlay) is
+  mounted at `/lfs` before `main()` through a `zephyr,fstab` node, and
+  formatted automatically on the first boot. It holds sequences (`/lfs/seq/`,
+  created by `configureTopology()`) and the parameter database
+  (`/lfs/PrmDb.dat`). Zephyr has no working directory, so every F´ file path
+  must be absolute under `/lfs`. A UF2 or picotool flash only rewrites the image's
+  own blocks, so the files survive a reflash. To wipe them, erase the whole
+  chip (`picotool erase`).
+  - `CONFIG_FS_LITTLEFS_CACHE_SIZE` in `prj.conf` must equal the fstab's
+    `cache-size`. The per-file cache heap is sized from the Kconfig value, so
+    a smaller one silently limits how many files can be open at once.
+  - **Flash writes stall the whole chip.** `flash_rpi_pico` runs each 4 KiB
+    erase and page program with interrupts locked, because the code executes
+    from that same flash. Rate groups and USB pause for tens of milliseconds
+    while a file is written (file uplink, `PRM_SAVE_FILE`). Reads don't stall.
+  - Os::File's `OPEN_WRITE` on Zephyr doesn't truncate, so file uplink over
+    an existing, longer file leaves its old tail. Delete before
+    re-uploading (see `docs/OPERATOR_MANUAL.md`).
+    `fileManager.ListDirectory` works on Zephyr, unlike on the SCM's Arduino
+    SD layer.
+- **Command sequencer.** `cmdSeq` (`Svc.CmdSequencer`) runs on the 10 Hz
+  rate group, has a 5 KiB sequence buffer and a 60 s per-command timeout, and
+  reads sequences from `/lfs/seq/`. `uart_gds.sh`/`lan_uart_gds.sh` pass
+  `--remote-sequence-directory /lfs/seq`, so the GDS Sequence tab uploads
+  there. Source sequences live in `Sequences/`, and `make sequences` compiles
+  them against the built dictionary.
 
 ### F´ / fprime-zephyr / Zephyr compatibility layer
 
@@ -618,15 +774,19 @@ How to use it:
 | `FW_COM_BUFFER_MAX_SIZE` | `FprimeBilleeRcm/Config/FpConstants.fpp` | 160 (framework default 512) |
 | `FW_FILE_CHUNK_SIZE` | `FprimeBilleeRcm/Config/PlatformCfg.fpp` | 128 (framework default 512) |
 | `FW_LOG_STRING_MAX_SIZE` | `FprimeBilleeRcm/Config/FpConstants.fpp` | 100 (framework default 200) |
-| `TLMCHAN_HASH_BUCKETS` | `FprimeBilleeRcm/Config/TlmChanImplCfg.hpp` | 125 (must be ≥ generated channel count; currently 119) |
+| `TLMCHAN_HASH_BUCKETS` | `FprimeBilleeRcm/Config/TlmChanImplCfg.hpp` | 125 (must be ≥ generated channel count; currently 125, **no headroom left**) |
 | `CdhCoreConfig.QueueSizes.$health` | `config/rp2350-overrides/CdhCoreConfig.fpp` | 16 (framework default 32) |
 | `CdhCoreConfig.QueueSizes.tlmSend` | `config/rp2350-overrides/CdhCoreConfig.fpp` | 16 (framework default 32) |
 | `ComCcsdsConfig.QueueSizes.comQueue` | `config/rp2350-overrides/ComCcsdsConfig.fpp` | 16 (framework default 24) |
-| `ComCcsdsConfig.QueueDepths.{events,tlm,file}` | `config/rp2350-overrides/ComCcsdsConfig.fpp` | 4 / 8 / 4 (framework default 16 / 32 / 4) |
+| `ComCcsdsConfig.QueueDepths.{events,tlm,file}` | `config/rp2350-overrides/ComCcsdsConfig.fpp` | 20 / 8 / 4 (framework default 16 / 32 / 4). Events at 20 so a running sequence's burst of events isn't dropped |
 | `CONFIG_DYNAMIC_THREAD_POOL_SIZE` | `prj.conf` | 20 (one per active component) |
 | `CONFIG_DYNAMIC_THREAD_STACK_SIZE` | `prj.conf` | 8192 (must match every active-component stack size) |
 | `cmdSeq` sequence buffer | `rp2350Deployment/Top/rp2350DeploymentTopology.cpp` (`configureTopology()`) | 5 KiB, flat |
 | `FPManager`'s `powerReadingIn`/`thermalReadingIn` queue | `rp2350Deployment/Top/instances.fpp` | 16, `drop` overflow policy |
+| LittleFS storage partition | `boards/rpi_pico2_rp2350a_m33.overlay` | 1 MB at flash offset `0x300000`, mounted at `/lfs` |
+| `CONFIG_FS_LITTLEFS_CACHE_SIZE` / `NUM_FILES` | `prj.conf` | 256 (= fstab `cache-size`) / 4. LittleFS takes about 2 KiB of static RAM in total |
+| `cmdSeq` timeout / tick | `rp2350DeploymentTopology.cpp` / `topology.fpp` | 60 s / 10 Hz (`rateGroup1`) |
+| `fileManager.schedIn` | `topology.fpp` | 10 Hz (`rateGroup1`): `ListDirectory` emits one entry per tick |
 
 Keep significant static headroom and re-measure on hardware (don't just
 rebuild and assume) after changing any of: active task count or stack size;
@@ -641,9 +801,9 @@ parameter entries; data-product catalog size.
 
 | File | Purpose |
 | --- | --- |
-| `Makefile` | Setup, build, flash (`cpfirm mac`/`wsl`), and GDS (`gds mac`/`wsl`) entry points |
-| `prj.conf` | Zephyr threads, heap, C++, USB CDC ACM, I2C, and device configuration |
-| `boards/rpi_pico2_rp2350a_m33.overlay` | Routes the chosen console to USB CDC ACM; subsystem power-enable and E-STOP GPIO pins; I2C0/I2C1 pin remap |
+| `Makefile` | Setup, build, flash (`cpfirm` — mac/wsl/Linux auto-mount/picotool), `bootsel`, `setup-picotool`, GDS (`gds mac`/`wsl`), and the `install-gds-service` systemd entry points |
+| `prj.conf` | Zephyr threads, heap, C++, USB CDC ACM, I2C, flash/LittleFS, and device configuration |
+| `boards/rpi_pico2_rp2350a_m33.overlay` | Routes the chosen console to USB CDC ACM; subsystem power-enable and E-STOP GPIO pins; I2C0/I2C1 pin remap; flash storage partition and the `/lfs` LittleFS mount |
 | `CMakeLists.txt` | Loads Zephyr, F´, compatibility code, configuration, and deployment |
 | `config/rp2350-overrides/CdhCoreConfig.fpp` | CDH queue depths/stacks |
 | `config/rp2350-overrides/ComCcsdsConfig.fpp` | CCSDS queue depths/stacks/buffer sizes |
@@ -658,7 +818,11 @@ parameter entries; data-product catalog size.
 | `rp2350Deployment/Top/topology.fpp` | Instance list and port connections |
 | `rp2350Deployment/Top/rp2350DeploymentTopology.cpp` | Zephyr device configuration and topology startup |
 | `uart_gds.sh` | CCSDS-over-UART GDS launcher (used by `make gds`) |
-| `west.yml` | Pinned Zephyr and required modules |
+| `lan_uart_gds.sh` | Same launcher, web UI bound to `0.0.0.0` for LAN access |
+| `gds-run-loop.sh` | Runs `lan_uart_gds.sh` forever, retrying 10s after any exit |
+| `install-lan-gds-service.sh` | Installs `screen` + the `billee-lan-gds` systemd service (`make install-gds-service`) |
+| `west.yml` | Pinned Zephyr and required modules (including `littlefs`) |
+| `Sequences/` | Command sequence sources (`.seq`). `make sequences` compiles them to `build-artifacts/sequences/*.bin` |
 | `settings.ini` | F´ framework and library locations |
 
 ### USB console
@@ -781,6 +945,49 @@ If none exists, repeat the USB/IP attachment procedure.
 5. Run with detailed logging: `./uart_gds.sh --log-to-stdout --log-level-gds DEBUG`.
 6. Confirm the board didn't return to BOOTSEL and still appears as `2FE3:0004`.
 
+### Board unreachable or "connects but no traffic" on a shared Jetson
+
+This project and [`fprime-arduino-billee-scm`](../fprime-arduino-billee-scm)
+normally run side by side on the same Jetson. Two distinct, previously
+misdiagnosed problems can both produce "GDS looks connected but there's no
+telemetry" — an earlier attempt fixed neither by patching `fprime-gds`'s
+UART adapter to assert `dtr`/`rts`; that patch has been removed, since
+directly capturing the firmware's own boot-time output over `pyserial`
+confirmed the RP2350 side was never the actual bug.
+
+**1. `/dev/ttyACMx` numbering isn't stable across a reboot.** Which raw
+device node each board gets is assigned by USB enumeration order, not
+device identity — like DHCP reassigning IP addresses. A hardcoded
+`UART_DEVICE=/dev/ttyACM0` can silently point at the *other* board after a
+reboot. Fixed by a project-owned udev rule (`udev/99-billee-rcm.rules`,
+installed automatically by `make setup` via `make setup-udev`) that creates
+a persistent `/dev/ttyBILLEE_RCM` symlink keyed on this board's USB
+identity (`2FE3:0004`), always pointing at the RP2350 regardless of which
+`ttyACMx` node the kernel assigns it. `uart_gds.sh`/`lan_uart_gds.sh` and
+the systemd service now default to this symlink. This matches by board
+*type*, correct as long as only one RP2350 is attached to this Jetson at a
+time — see the comments in `udev/99-billee-rcm.rules` for upgrading to
+serial-number matching if that ever changes.
+
+**2. Starting one deployment's GDS could silently kill the other's.**
+`uart_gds.sh`/`lan_uart_gds.sh` clean up stale processes on every startup
+with `pkill -9 -f "fprime_gds.executables.comm"` — a pattern that matched by
+bare module name, not by which repo/venv launched it. Confirmed live on
+this Jetson: starting `fprime-arduino-billee-scm`'s GDS ~60s after this
+project's was already running killed this project's comm subprocess as
+collateral damage, leaving its dashboard "up" (port still listening) but
+with nothing actually reading `/dev/ttyACM0` — exactly this symptom, with
+no DTR involvement at all. Fixed by scoping the cleanup patterns to this
+repo's own `fprime-venv` path, and by giving each deployment its own
+explicit `--zmq-transport` IPC socket pair (`/tmp/fprime-server-{in,out}-rcm`
+vs. `...-scm`) instead of relying on `fprime-gds` version-dependent
+defaults that happened to differ only by coincidence of the two repos'
+separately pinned `fprime-gds` versions.
+
+If GDS still shows no traffic after both of the above are in place, work
+through the general checklist above (stale processes holding the port,
+dictionary freshness, framing selection) before suspecting the board again.
+
 ### Build selects `/usr/bin/cmake` 3.22
 
 Build through Make from the repository root (`make build-rp2350`) — the
@@ -861,8 +1068,19 @@ telemetry and safe-command test (`make gds mac` / `wsl`).
   in this deployment is macOS-specific.
 - The development VID/PID (`2FE3:0004`) must be replaced before distributing
   a product.
-- File APIs are present, but a durable on-board filesystem isn't
-  established by this setup.
+- The on-board filesystem is the Pico's own program flash (1 MB LittleFS).
+  Writing to it briefly stalls the whole chip (see
+  [Platform facts](#platform-facts)), so don't uplink files or save parameters
+  while driving.
+- **A bare RP2350 with no sensors attached intermittently stops taking
+  commands** about 10 s after boot. The 10 Hz rate group stops: there is no
+  uplink and INA polling stops, while the 1 Hz telemetry keeps flowing. It
+  happens on roughly half of boots, also on the Nov 8 firmware (`ae2114f`), and
+  starts when INA polling gives up on the missing INA780s. It hasn't been seen
+  on the rover board with its sensors attached. On a bench tester, if commands
+  get no response, tap RESET. Root cause not yet found. `printk` output doesn't
+  reach the USB link, so diagnosing it needs SWD or telemetry-based
+  instrumentation.
 - 8 KiB active-component stacks are the proven-working value for this
   topology; production stack high-water marks should still be measured
   rather than assumed.

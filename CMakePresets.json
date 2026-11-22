@@ -13,7 +13,9 @@
         },
         "cacheVariables": {
             "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-            "CMAKE_BUILD_TYPE": "Release"
+            "CMAKE_BUILD_TYPE": "Release",
+            "BOARD": "rpi_pico2/rp2350a/m33",
+            "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/lib/fprime-zephyr/cmake/toolchain/zephyr.cmake"
         }
       },
       {

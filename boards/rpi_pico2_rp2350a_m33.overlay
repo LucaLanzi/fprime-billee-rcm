@@ -32,16 +32,58 @@
     };
 
     /*
-     * E-STOP status input, GPIO12. Not active-low in the devicetree sense --
-     * the raw pin level is passed straight through so Fw::Logic::LOW/HIGH in
-     * software matches the physical line: pulled LOW = E-STOP on, HIGH = off.
-     * Internal pull-up so the input reads a defined HIGH (off) if the E-STOP
-     * circuit is ever disconnected rather than floating.
+     * E-STOP status input, GPIO12. Raw level passed straight through:
+     * LOW = E-STOP engaged (stop), HIGH = released (run allowed).
+     * NO internal pull of any kind: the external 10k pulldown (R61) is the
+     * fail-safe, and this same net drives the first input of all 8 hardware
+     * AND gates (U17/U18), so an internal pull would shift the voltage they see.
+     * Never configure this pin as an output.
      */
     billee-gpio-inputs {
         compatible = "gpio-keys";
 
-        estop_status: estop-status { gpios = <&gpio0 12 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; };
+        estop_status: estop-status { gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>; };
+    };
+
+    /*
+     * LittleFS on storage_partition (below), auto-mounted at /lfs before main().
+     * Holds command sequences (/lfs/seq/*.bin) and the parameter database
+     * (/lfs/PrmDb.dat). The first boot on a blank partition formats it.
+     * cache-size matches the flash's 256-byte program page.
+     */
+    fstab {
+        compatible = "zephyr,fstab";
+
+        lfs_storage: lfs-storage {
+            compatible = "zephyr,fstab,littlefs";
+            mount-point = "/lfs";
+            partition = <&storage_partition>;
+            automount;
+            read-size = <16>;
+            prog-size = <16>;
+            cache-size = <256>;
+            lookahead-size = <32>;
+            block-cycles = <512>;
+        };
+    };
+};
+
+/*
+ * 4 MB QSPI flash layout: the firmware image is linked from offset 0 (~465 KB
+ * today), and the last 1 MB is the LittleFS storage partition. A UF2/picotool
+ * flash only rewrites the image's own blocks, so sequences and saved
+ * parameters survive a reflash.
+ */
+&flash0 {
+    partitions {
+        compatible = "fixed-partitions";
+        #address-cells = <1>;
+        #size-cells = <1>;
+
+        storage_partition: partition@300000 {
+            label = "storage";
+            reg = <0x00300000 DT_SIZE_M(1)>;
+        };
     };
 };
 

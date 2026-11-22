@@ -63,5 +63,13 @@ manifest:
       groups:
         - hal
 
+    # LittleFS on the Pico 2's internal QSPI flash (/lfs): command sequences and the
+    # parameter database. Revision pinned to the one Zephyr v4.3.0's own west.yml uses.
+    - name: littlefs
+      path: lib/zephyr-workspace/modules/fs/littlefs
+      revision: 8f5ca347843363882619d8f96c00d8dbd88a8e79
+      groups:
+        - fs
+
   self:
     path: .

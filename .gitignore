@@ -8,10 +8,10 @@ build-fprime-*
 *.template.hpp
 
 # Misc
+/build-tools/
 /venv/
 /fprime-venv/
 /.idea/
-/.vscode/
 .DS_Store
 *.gcov
 lib/zephyr-workspace/
